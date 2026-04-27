@@ -4,3 +4,10 @@ model_list:
       model: anthropic/claude-haiku-4-5-20251001
       api_key: os.environ/ANTHROPIC_API_KEY
       temperature: 0.1
+      rpm: 45
+
+litellm_settings:
+  num_retries: 10
+  request_timeout: 180
+  allowed_fails: 10
+  cooldown_time: 120
