@@ -233,7 +233,7 @@ Models Llama-3.1-8B-Instruct-BF16 and claude-haiku-4-5-20251001 are used as scor
 Q8_0 run with cross-scorer comparison (400 HarmBench objectives):
 
 ```
-============================================================
+=================================================
                    metric | q8_0 | bf16 | claude
 --------------------------+------+------+-------
                     total |  400 |  400 |    400
