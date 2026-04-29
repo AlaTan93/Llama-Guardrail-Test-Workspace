@@ -6,6 +6,19 @@ model_list:
       temperature: 0.1
       rpm: 45
 
+  - model_name: victim-llama
+    litellm_params:
+      model: openai/llama3
+      api_base: http://127.0.0.1:8080/v1
+      api_key: not-needed
+
+  - model_name: bf16-llama
+    litellm_params:
+      model: openai/llama3
+      api_base: http://127.0.0.1:8081/v1
+      api_key: not-needed
+      temperature: 0.1
+
 litellm_settings:
   num_retries: 10
   request_timeout: 360

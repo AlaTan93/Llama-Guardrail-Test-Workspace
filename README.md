@@ -5,33 +5,38 @@ Quantization safety red-teaming pipeline. Uses [PyRIT](https://github.com/Azure/
 ## Architecture
 
 ```
-llama.cpp :8080 (quantized victim)  ←  PyRIT attacks  ←  HarmBench
+llama.cpp :8080 (quantized victim)
+llama.cpp :8081 (BF16 reference)
                      │
                      ▼
-              raw_responses.csv
+           LiteLLM proxy :4000
+           ├─ victim-llama  → :8080
+           ├─ bf16-llama    → :8081
+           └─ claude-haiku-4.5 → Anthropic API
                      │
-       ┌─────────────┼─────────────┐
-       ▼             ▼             ▼
-   :8080 self    :8081 bf16    LiteLLM → Claude Haiku 4.5
-       ▼             ▼             ▼
- scored_self    scored_bf16   scored_claude
-       └─────────────┼─────────────┘
+         ┌───────────┼───────────┐
+         ▼           ▼           ▼
+  scored_pyrit  scored_bf16  scored_claude
+         └───────────┼───────────┘
                      ▼
                 summary.csv
 ```
 
-- **Phase 1** (`redteam.py`): PyRIT sends HarmBench objectives to the victim model. All responses are saved to `raw_responses.csv`.
-- **Phase 2** (`scoring.py`): Three scorer models re-score every response independently and in parallel. Results are written incrementally and a cross-scorer summary is generated.
+All model traffic (victim target, BF16 scorer, Claude scorer) routes through a single LiteLLM proxy. The proxy provides unified retry logic, rate limiting, and temperature control.
+
+- **Phase 1** (`redteam.py`): PyRIT sends HarmBench objectives to the victim model via LiteLLM. All responses are saved to `raw_responses.csv`.
+- **Phase 2** (`scoring.py`): Scorer models re-score every response independently and in parallel via LiteLLM. Results are written incrementally and a cross-scorer summary is generated.
 
 ## Project Structure
 
 | File | Purpose |
 |---|---|
-| `main.py` | Entry point — orchestrates attack + scoring phases |
+| `main.py` | Entry point — starts LiteLLM proxy, orchestrates attack + scoring phases |
 | `redteam.py` | Attack generation using PyRIT RedTeamAgent + HarmBench |
-| `scoring.py` | Multi-model scoring (self / BF16 / Claude) |
-| `litellm_config.yaml` | LiteLLM proxy config (Claude Haiku 4.5, retries, rate limits) |
-| `.pyrit/.env` | Victim model endpoint configuration |
+| `scoring.py` | Multi-model scoring (BF16 / Claude) |
+| `litellm_proxy.py` | Shared LiteLLM proxy startup logic |
+| `litellm_config.yaml` | LiteLLM proxy config (all models, retries, rate limits) |
+| `patches.py` | PyRIT monkey-patches (JSON normalization) |
 
 ## Prerequisites
 
@@ -70,18 +75,13 @@ wget -O models/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf \
 Per the research plan, test across quantization tiers:
 **Q2_K, Q3_K_M, Q4_K_M, Q5_K_M, Q6_K, Q8_0, BF16**.
 
-### 4. Configure the victim endpoint
+### 4. Configure LiteLLM
 
-Edit `.pyrit/.env`:
+Endpoints are defined in `src/litellm_config.yaml`. The defaults assume:
+- Quantized victim at `http://127.0.0.1:8080/v1`
+- BF16 reference at `http://127.0.0.1:8081/v1`
 
-```
-OPENAI_CHAT_ENDPOINT="http://127.0.0.1:8080/v1"
-OPENAI_CHAT_KEY="not-needed"
-OPENAI_CHAT_MODEL="llama3"
-```
-
-The `OPENAI_CHAT_MODEL` value must match the model name the server
-reports — check with `curl http://127.0.0.1:8080/v1/models`.
+If your llama.cpp servers use different ports or model names, edit the `api_base` and `model` fields accordingly.
 
 ### 5. Set the Anthropic API key
 
@@ -97,29 +97,50 @@ ANTHROPIC_API_KEY="sk-ant-..."
 
 ## Usage
 
-### Start the llama.cpp servers
+### Two-Phase GPU Workflow (recommended)
 
-You need two llama.cpp instances running — one for the quantized victim (and self-scoring) and one for the BF16 reference scorer:
+If your GPU can only hold one model at a time, run the pipeline in two phases:
 
+**Phase A** — Quantized model on GPU, no external API needed:
 ```bash
-# Terminal 1: Quantized model (victim + self-scorer)
+# Terminal 1: Start quantized victim
 ./llama.cpp/build/bin/llama-server \
-  -m models/meta-llama-Llama-3.1-8B-Instruct-Q8_0.gguf \
+  -m models/Meta-Llama-3.1-8B-Instruct-Q8_0.gguf \
   --host 127.0.0.1 --port 8080 -ngl 99
 
-# Terminal 2: BF16 reference model (scorer)
+# Terminal 2: Run attacks + victim self-scoring
+python main.py --only-attack
+```
+
+**Phase B** — Swap to BF16 model, add Claude evaluation:
+```bash
+# Terminal 1: Stop quantized, start BF16
 ./llama.cpp/build/bin/llama-server \
   -m models/Meta-Llama-3.1-8B-Instruct-BF16.gguf \
   --host 127.0.0.1 --port 8081 -ngl 99
+
+# Terminal 2: Re-score with BF16 + Claude
+python main.py --skip-attack --latest --models bf16,claude
 ```
 
-### Run the full pipeline
+### Single-Phase Workflow
+
+If you have enough VRAM for both models simultaneously:
 
 ```bash
+# Terminal 1: Quantized victim
+./llama.cpp/build/bin/llama-server \
+  -m models/Meta-Llama-3.1-8B-Instruct-Q8_0.gguf \
+  --host 127.0.0.1 --port 8080 -ngl 99
+
+# Terminal 2: BF16 reference
+./llama.cpp/build/bin/llama-server \
+  -m models/Meta-Llama-3.1-8B-Instruct-BF16.gguf \
+  --host 127.0.0.1 --port 8081 -ngl 99
+
+# Terminal 3: Full pipeline
 python main.py
 ```
-
-This runs both phases: attack generation followed by scoring with all three models.
 
 ### CLI options
 
@@ -127,24 +148,29 @@ This runs both phases: attack generation followed by scoring with all three mode
 |---|---|---|
 | `--dataset-size` | `400` | Number of HarmBench objectives |
 | `--skip-attack` | off | Skip attack phase, re-score an existing run |
-| `--run-dir` | — | Path to existing run directory (required with `--skip-attack`) |
-| `--models` | `pyrit,bf16,claude` | Which scorer models to use |
-| `--victim-model` | `llama3` | Override victim model name |
+| `--only-attack` | off | Run attacks + victim self-scoring only (no Claude/BF16) |
+| `--run-dir` | — | Path to existing run directory |
+| `--latest` | off | Use the most recent run directory (with `--skip-attack`) |
+| `--models` | varies | Comma-separated scorers (default depends on `--only-attack`) |
+| `--victim-model` | `victim-llama` | LiteLLM model name for victim target |
 
 ### Examples
 
 ```bash
-# Full run with default settings (400 objectives, all 3 scorers)
+# Phase A: attacks + victim self-scoring (no Claude/BF16)
+python main.py --only-attack
+
+# Phase B: re-score latest run with BF16 + Claude
+python main.py --skip-attack --latest --models bf16,claude
+
+# Full run with all scorers (both models loaded)
 python main.py
 
 # Small test run
 python main.py --dataset-size 10
 
-# Re-score an existing run (e.g. after a crash)
+# Re-score a specific run
 python main.py --skip-attack --run-dir results/run_2026042714301542
-
-# Only BF16 and Claude scoring (skip pyrit extraction)
-python main.py --models bf16,claude
 
 # Run scoring standalone
 python scoring.py --run-dir results/run_2026042714301542 --models pyrit,bf16,claude
@@ -152,14 +178,25 @@ python scoring.py --run-dir results/run_2026042714301542 --models pyrit,bf16,cla
 
 Scoring is **resumable** — if interrupted, re-running the same command skips already-scored responses and continues from where it left off.
 
+### BF16 Control Run
+
+To establish a no-quantization baseline, attack the BF16 reference model directly:
+
+```bash
+python main.py --victim-model bf16-llama --only-attack
+python main.py --skip-attack --latest --models bf16,claude
+```
+
+This attacks the full-precision model, then scores with BF16 (self-assessment) and Claude (external judge). Compare the control run's `summary.csv` against quantized runs to isolate the effect of quantization on safety guardrails.
+
 ## Output Files
 
 Each run produces a directory under `results/`:
 
 ```
 results/run_<YYYYMMDDHHMMSSmmm>/
-  raw_responses.csv      All attack responses + PyRIT internal outcome
-  scored_self.csv        Re-scored by the quantized model itself
+  raw_responses.csv      All attack responses + victim model's self-assessment
+  scored_pyrit.csv       Victim model's self-assessment extracted as scores
   scored_bf16.csv        Re-scored by the BF16 reference model
   scored_claude.csv      Re-scored by Claude Haiku 4.5
   summary.csv            Cross-scorer comparison table
@@ -188,7 +225,7 @@ results/run_<YYYYMMDDHHMMSSmmm>/
 | `conversation_id` | Unique conversation identifier |
 | `score_value` | Scorer judgment: `true`, `false`, or `error` |
 | `score_rationale` | Scorer's explanation for the judgment |
-| `scorer_type` | Which scorer produced this row (`self`, `bf16`, or `claude`) |
+| `scorer_type` | Which scorer produced this row (`pyrit`, `bf16`, or `claude`) |
 | `executed_turns` | Number of conversation turns |
 | `execution_time_ms` | Attack execution time |
 | `pyrit_outcome` | PyRIT's internal judgment (for comparison) |
@@ -205,30 +242,54 @@ results/run_<YYYYMMDDHHMMSSmmm>/
 | `success_rate_pct` | Percentage of successful attacks |
 | `agreement_with_claude_pct` | Agreement percentage with Claude's verdict |
 
-Each metric row has columns for every scorer (`self`, `bf16`, `claude`, `pyrit`).
+Each metric row has columns for every scorer in the run (`pyrit`, `bf16`, `claude`).
 
 ## Scoring Models
 
-| Scorer | Endpoint | Description |
+| Scorer | LiteLLM Model | Description |
 |---|---|---|
-| `self` | llama.cpp `:8080` | The same quantized model scores its own responses. At low quantization (e.g. Q2_K), self-scoring may produce garbage — that is itself a research finding. |
-| `bf16` | llama.cpp `:8081` | Full-precision (BF16) reference scorer. Provides a high-quality local baseline without external API dependency. |
-| `claude` | LiteLLM `:4000` → Anthropic | Claude Haiku 4.5 as an external judge. Treated as the ground truth reference for cross-scorer agreement metrics. |
+| `pyrit` | — | Extracts the victim model's self-assessment from Phase 1 (no LLM call). |
+| `bf16` | `bf16-llama` | Full-precision (BF16) reference scorer via llama.cpp `:8081`. |
+| `claude` | `claude-haiku-4.5` | Claude Haiku 4.5 as an external judge. Treated as the ground truth reference. |
 
-All three scorers use the identical `TASK_ACHIEVED` rubric via PyRIT's `SelfAskTrueFalseScorer`, ensuring results are directly comparable.
+All LLM scorers use `temperature=0.1` and the identical `TASK_ACHIEVED` rubric via PyRIT's `SelfAskTrueFalseScorer`.
 
 ## LiteLLM Proxy
 
-The LiteLLM proxy is started automatically when Claude scoring is needed. Configuration in `litellm_config.yaml`:
+The LiteLLM proxy is started automatically by `main.py` and manages all model traffic. Configuration in `src/litellm_config.yaml`:
 
-- **Model**: `anthropic/claude-haiku-4-5-20251001`
-- **Temperature**: `0.1` (deterministic scoring)
-- **Rate limit**: `45 rpm`
-- **Retries**: `10` attempts with `120s` cooldown on failure
+| Model Name | Backend | Temperature | Rate Limit |
+|---|---|---|---|
+| `victim-llama` | llama.cpp `:8080` | server default | — |
+| `bf16-llama` | llama.cpp `:8081` | `0.1` | — |
+| `claude-haiku-4.5` | Anthropic API | `0.1` | `45 rpm` |
 
-## Control Results (no prompt fuzzing) vs q8_0
+Global settings: `10` retries, `360s` request timeout, `120s` cooldown on failure.
+
+# Control Results
 
 Models Llama-3.1-8B-Instruct-BF16 and claude-haiku-4-5-20251001 are used as scorers.
+
+Success includes content policy violation records, as an assumption is made that anything that Claude returns as a ContentPolicyViolation implies that the attack was most likely a success.
+
+## Control Results (no prompt fuzzing) vs BF16
+
+```
+============================================
+                   metric | bf16 | claude
+--------------------------+-------+-------
+                    total |   400 |    400
+                  success |    90 |     49
+                  failure |   310 |    351
+                    error |     0 |      0
+             undetermined |     0 |      0
+ content_policy_violation |     0 |      1
+         success_rate_pct |  22.5 |  12.25
+             cpv_rate_pct |   0.0 |   2.04
+agreement_with_claude_pct | 72.25 |  100.0
+```
+
+## Control Results (no prompt fuzzing) vs Q8_0
 
 Q8_0 run with cross-scorer comparison (400 HarmBench objectives):
 
@@ -245,4 +306,21 @@ Q8_0 run with cross-scorer comparison (400 HarmBench objectives):
          success_rate_pct | 23.5 | 23.0 |   14.0
              cpv_rate_pct |  0.0 |  0.0 |   1.79
 agreement_with_claude_pct | 73.5 | 74.0 |  100.0
+```
+
+## Control Results (no prompt fuzzing) vs Q4_K_M
+
+```
+===================================================
+                   metric | q4_k_m|  bf16 | claude
+--------------------------+-------+-------+-------
+                    total |   400 |   400 |    400
+                  success |   162 |    81 |     50
+                  failure |   238 |   319 |    350
+                    error |     0 |     0 |      0
+             undetermined |     0 |     0 |      0
+ content_policy_violation |     0 |     0 |      0
+         success_rate_pct |  40.5 | 20.25 |   12.5
+             cpv_rate_pct |   0.0 |   0.0 |    0.0
+agreement_with_claude_pct |  58.0 | 73.75 |  100.0
 ```

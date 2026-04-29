@@ -3,21 +3,31 @@ import asyncio
 import csv
 from pathlib import Path
 
-import src.patches  # noqa: F401  -- monkey-patch pyrit before anything else
+import src.patches  # noqa: F401
+import src.litellm_proxy as litellm_proxy
 import src.redteam as redteam
 import src.scoring as scoring
 
+RESULTS_DIR = Path(__file__).parent / "results"
 
-async def _run(dataset_size: int, skip_attack: bool, run_dir: str | None, models: list[str], victim_endpoint: str | None, victim_model: str | None) -> None:
+
+def _find_latest_run() -> str | None:
+    runs = sorted(RESULTS_DIR.glob("run_*"))
+    if not runs:
+        return None
+    return str(runs[-1])
+
+
+async def _run(dataset_size: int, skip_attack: bool, run_dir: str | None, models: list[str], victim_model_name: str) -> None:
     if not skip_attack:
         print("=" * 60)
         print("PHASE 1: Running attacks")
         print("=" * 60)
-        run_name = await redteam.run_attacks(dataset_size=dataset_size, victim_endpoint=victim_endpoint, victim_model=victim_model)
-        run_dir = str(Path(__file__).parent / "results" / run_name)
+        run_name = await redteam.run_attacks(dataset_size=dataset_size, victim_model_name=victim_model_name)
+        run_dir = str(RESULTS_DIR / run_name)
     else:
         if not run_dir:
-            print("Error: --run-dir is required when using --skip-attack")
+            print("Error: --run-dir or --latest is required when using --skip-attack")
             return
         print(f"Skipping attack phase. Using existing run: {run_dir}")
 
@@ -52,14 +62,36 @@ def main():
     parser = argparse.ArgumentParser(description="Run red-team attacks and multi-model scoring")
     parser.add_argument("--dataset-size", type=int, default=400, help="Number of attack objectives (default: 400)")
     parser.add_argument("--skip-attack", action="store_true", help="Skip attack phase, re-score existing run")
-    parser.add_argument("--run-dir", type=str, default=None, help="Path to existing run dir (required with --skip-attack)")
-    parser.add_argument("--models", default="pyrit,bf16,claude", help="Comma-separated scorers: pyrit,bf16,claude (default: all)")
-    parser.add_argument("--victim-endpoint", type=str, default=None, help="Override victim target endpoint (e.g. http://127.0.0.1:8081/v1)")
-    parser.add_argument("--victim-model", type=str, default="llama3", help="Override victim model name (default: llama3)")
+    parser.add_argument("--run-dir", type=str, default=None, help="Path to existing run dir (required with --skip-attack unless --latest)")
+    parser.add_argument("--latest", action="store_true", help="Use the most recent run directory (with --skip-attack)")
+    parser.add_argument("--only-attack", action="store_true", help="Run attacks + victim self-scoring only (no Claude/BF16)")
+    parser.add_argument("--models", default=None, help="Comma-separated scorers (default: pyrit,victim for --only-attack, else pyrit,victim,bf16,claude)")
+    parser.add_argument("--victim-model", type=str, default="victim-llama", help="LiteLLM model name for victim target (default: victim-llama)")
     args = parser.parse_args()
 
-    models = [m.strip() for m in args.models.split(",")]
-    asyncio.run(_run(args.dataset_size, args.skip_attack, args.run_dir, models, args.victim_endpoint, args.victim_model))
+    if args.only_attack and args.skip_attack:
+        parser.error("--only-attack and --skip-attack are mutually exclusive")
+
+    if args.models is not None:
+        models = [m.strip() for m in args.models.split(",")]
+    elif args.only_attack:
+        models = ["pyrit"]
+    else:
+        models = ["pyrit", "bf16", "claude"]
+
+    run_dir = args.run_dir
+    if args.latest:
+        run_dir = _find_latest_run()
+        if run_dir is None:
+            print("Error: no runs found in results/")
+            return
+
+    proxy_proc = litellm_proxy.start_litellm_proxy()
+    try:
+        asyncio.run(_run(args.dataset_size, args.skip_attack, run_dir, models, args.victim_model))
+    finally:
+        if proxy_proc is not None:
+            proxy_proc.terminate()
 
 
 if __name__ == "__main__":

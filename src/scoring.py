@@ -3,9 +3,6 @@ import asyncio
 import csv
 import json
 import re
-import subprocess
-import sys
-import time
 from pathlib import Path
 
 from pyrit.models import Message, MessagePiece
@@ -13,23 +10,20 @@ from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
 from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestionPaths
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
-try:
-    import httpx
-except ImportError:
-    import urllib.request
-    httpx = None
-
-LITELLM_PORT = 4000
-LITELLM_CONFIG = str(Path(__file__).parent / "litellm_config.yaml")
-SCORER_MODEL = "claude-haiku-4.5"
-PROXY_STARTUP_TIMEOUT = 60
-BF16_PORT = 8081
+import src.litellm_proxy as litellm_proxy
 
 SCORED_FIELDS = [
     "objective", "last_response", "strategy", "conversation_id",
     "score_value", "score_rationale", "scorer_type",
     "executed_turns", "execution_time_ms"
 ]
+
+LITELLM_ENDPOINT = f"http://127.0.0.1:{litellm_proxy.LITELLM_PORT}/v1"
+
+SCORER_MODEL_MAP = {
+    "bf16": "bf16-llama",
+    "claude": "claude-haiku-4.5",
+}
 
 
 def _sanitize_json_response(text: str) -> str:
@@ -80,22 +74,6 @@ class _SanitizingScorerTarget(PromptChatTarget):
         return response
 
 
-def _parse_pyrit_env() -> dict[str, str]:
-    env_path = Path(__file__).parent / ".pyrit" / ".env"
-    result = {}
-    if not env_path.exists():
-        return result
-    with open(env_path) as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            match = re.match(r'^(\w+)\s*=\s*"?(.*?)"?\s*$', line)
-            if match:
-                result[match.group(1)] = match.group(2)
-    return result
-
-
 def _sanitize_response(text: str, max_length: int = 2000) -> str:
     text = "".join(c for c in text if c >= " " or c == " ").strip()
     if len(text) > max_length:
@@ -144,54 +122,15 @@ def _append_scored_row(path: Path, row: dict, write_header: bool) -> None:
         writer.writerow(row)
 
 
-def _start_litellm_proxy() -> subprocess.Popen:
-    litellm_bin = str(Path(sys.executable).parent / "litellm")
-    proc = subprocess.Popen(
-        [litellm_bin, "--config", LITELLM_CONFIG, "--port", str(LITELLM_PORT)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    print(f"Starting LiteLLM proxy on port {LITELLM_PORT} ...")
-    deadline = time.monotonic() + PROXY_STARTUP_TIMEOUT
-    while time.monotonic() < deadline:
-        try:
-            if httpx is not None:
-                resp = httpx.get(f"http://127.0.0.1:{LITELLM_PORT}/health", timeout=2)
-                if resp.status_code == 200:
-                    print("LiteLLM proxy is ready.")
-                    return proc
-            else:
-                urllib.request.urlopen(f"http://127.0.0.1:{LITELLM_PORT}/health", timeout=2)
-                print("LiteLLM proxy is ready.")
-                return proc
-        except Exception:
-            pass
-        if proc.poll() is not None:
-            stdout = proc.stdout.read().decode() if proc.stdout else ""
-            stderr = proc.stderr.read().decode() if proc.stderr else ""
-            raise RuntimeError(f"LiteLLM proxy exited early.\nstdout: {stdout}\nstderr: {stderr}")
-        time.sleep(1)
-    proc.terminate()
-    raise RuntimeError(f"LiteLLM proxy did not become healthy within {PROXY_STARTUP_TIMEOUT}s")
-
-
-def _make_scorer_target(scorer_type: str, pyrit_env: dict[str, str]) -> OpenAIChatTarget:
-    if scorer_type == "bf16":
-        return OpenAIChatTarget(
-            endpoint=f"http://127.0.0.1:{BF16_PORT}/v1",
-            api_key="not-needed",
-            model_name="llama3",
-            temperature=0.1,
-        )
-    elif scorer_type == "claude":
-        return OpenAIChatTarget(
-            endpoint=f"http://127.0.0.1:{LITELLM_PORT}/v1",
-            api_key="not-needed",
-            model_name=SCORER_MODEL,
-            temperature=0.1,
-        )
-    else:
+def _make_scorer_target(scorer_type: str) -> OpenAIChatTarget:
+    if scorer_type not in SCORER_MODEL_MAP:
         raise ValueError(f"Unknown scorer type: {scorer_type}")
+    return OpenAIChatTarget(
+        endpoint=LITELLM_ENDPOINT,
+        api_key="not-needed",
+        model_name=SCORER_MODEL_MAP[scorer_type],
+        temperature=0.1,
+    )
 
 
 def _outcome_to_score(outcome: str) -> str:
@@ -243,7 +182,6 @@ def _score_pyrit_outcomes(
 async def _score_responses(
     responses: list[dict],
     scorer_type: str,
-    pyrit_env: dict[str, str],
     run_dir: str,
 ) -> None:
     output_path = Path(run_dir) / f"scored_{scorer_type}.csv"
@@ -259,7 +197,7 @@ async def _score_responses(
         return
 
     write_header = not output_path.exists()
-    target = _make_scorer_target(scorer_type, pyrit_env)
+    target = _make_scorer_target(scorer_type)
     target = _SanitizingScorerTarget(target)
     scorer = SelfAskTrueFalseScorer(
         chat_target=target,
@@ -436,7 +374,6 @@ async def run_scoring(run_dir: str, models: list[str] | None = None) -> None:
 
     await initialize_pyrit_async(memory_db_type=IN_MEMORY, initializers=[])  # type: ignore
 
-    pyrit_env = _parse_pyrit_env()
     responses = _load_raw_responses(run_dir)
     print(f"Loaded {len(responses)} responses from {run_dir}")
 
@@ -449,13 +386,11 @@ async def run_scoring(run_dir: str, models: list[str] | None = None) -> None:
         _write_summary(run_dir, models, responses)
         return
 
-    proxy_proc = None
-    if "claude" in llm_models:
-        proxy_proc = _start_litellm_proxy()
+    proxy_proc = litellm_proxy.start_litellm_proxy()
 
     try:
         tasks = [
-            _score_responses(responses, m, pyrit_env, run_dir)
+            _score_responses(responses, m, run_dir)
             for m in llm_models
         ]
         await asyncio.gather(*tasks)

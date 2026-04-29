@@ -1,9 +1,5 @@
-import atexit
 import csv
 import os
-import subprocess
-import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -18,55 +14,14 @@ from pyrit.datasets import SeedDatasetProvider
 from pyrit.models import SeedGroup
 from pyrit.scenario import DatasetConfiguration
 
-try:
-    import httpx
-except ImportError:
-    import urllib.request
-    httpx = None
+import src.litellm_proxy as litellm_proxy
 
 RAW_FIELDS = [
     "objective", "last_response", "strategy", "conversation_id",
     "executed_turns", "execution_time_ms", "pyrit_outcome", "pyrit_outcome_reason",
 ]
 
-LITELLM_PORT = 4000
-LITELLM_CONFIG = str(Path(__file__).parent / "litellm_config.yaml")
-SCORER_MODEL = "claude-haiku-4.5"
-PROXY_STARTUP_TIMEOUT = 60
-
-
-def _start_litellm_proxy() -> subprocess.Popen:
-    litellm_bin = str(Path(sys.executable).parent / "litellm")
-    proc = subprocess.Popen(
-        [litellm_bin, "--config", LITELLM_CONFIG, "--port", str(LITELLM_PORT)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    atexit.register(proc.terminate)
-
-    print(f"Starting LiteLLM proxy on port {LITELLM_PORT} ...")
-    deadline = time.monotonic() + PROXY_STARTUP_TIMEOUT
-    while time.monotonic() < deadline:
-        try:
-            if httpx is not None:
-                resp = httpx.get(f"http://127.0.0.1:{LITELLM_PORT}/health", timeout=2)
-                if resp.status_code == 200:
-                    print("LiteLLM proxy is ready.")
-                    return proc
-            else:
-                urllib.request.urlopen(f"http://127.0.0.1:{LITELLM_PORT}/health", timeout=2)
-                print("LiteLLM proxy is ready.")
-                return proc
-        except Exception:
-            pass
-        if proc.poll() is not None:
-            stdout = proc.stdout.read().decode() if proc.stdout else ""
-            stderr = proc.stderr.read().decode() if proc.stderr else ""
-            raise RuntimeError(f"LiteLLM proxy exited early.\nstdout: {stdout}\nstderr: {stderr}")
-        time.sleep(1)
-
-    proc.terminate()
-    raise RuntimeError(f"LiteLLM proxy did not become healthy within {PROXY_STARTUP_TIMEOUT}s")
+LITELLM_ENDPOINT = f"http://127.0.0.1:{litellm_proxy.LITELLM_PORT}/v1"
 
 
 def _write_csv(path: Path, rows: list[dict], fields: list[str]) -> None:
@@ -103,19 +58,14 @@ def write_run_results(scenario_result: ScenarioResult) -> str:
     return run_name
 
 
-async def run_attacks(dataset_size: int = 400, victim_endpoint: str | None = None, victim_model: str | None = None) -> str:
+async def run_attacks(dataset_size: int = 400, victim_model_name: str = "victim-llama") -> str:
     await initialize_pyrit_async(memory_db_type=IN_MEMORY, initializers=[])  # type: ignore
 
-    _ = _start_litellm_proxy()
-
-    if victim_endpoint:
-        objective_target = OpenAIChatTarget(
-            endpoint=victim_endpoint,
-            api_key="not-needed",
-            model_name=victim_model or "llama3",
-        )
-    else:
-        objective_target = OpenAIChatTarget()
+    objective_target = OpenAIChatTarget(
+        endpoint=LITELLM_ENDPOINT,
+        api_key="not-needed",
+        model_name=victim_model_name,
+    )
     printer = ConsoleScenarioResultPrinter()
 
     datasets = await SeedDatasetProvider.fetch_datasets_async(dataset_names=["harmbench"])  # type: ignore
@@ -127,7 +77,12 @@ async def run_attacks(dataset_size: int = 400, victim_endpoint: str | None = Non
     ]
 
     objective_scorer = SelfAskTrueFalseScorer(
-        chat_target=OpenAIChatTarget(),
+        chat_target=OpenAIChatTarget(
+            endpoint=LITELLM_ENDPOINT,
+            api_key="not-needed",
+            model_name=victim_model_name,
+            temperature=0.1,
+        ),
         true_false_question_path=TrueFalseQuestionPaths.TASK_ACHIEVED.value,
     )
     attack_scoring_config = AttackScoringConfig(objective_scorer=objective_scorer)

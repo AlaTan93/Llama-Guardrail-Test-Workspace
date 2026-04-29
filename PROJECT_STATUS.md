@@ -9,34 +9,36 @@ Full research design is documented in `exploiter_plan.md`.
 ## Architecture
 
 ```
-llama.cpp server (victim model, OpenAI-compatible API)
-        |
-        v
+llama.cpp :8080 (quantized victim)
+llama.cpp :8081 (BF16 reference)
+              |
+              v
+    LiteLLM proxy (port 4000)
+    ├─ victim-llama  → :8080
+    ├─ bf16-llama    → :8081
+    └─ claude-haiku-4.5 → Anthropic API
+              |
+              v
   PyRIT RedTeamAgent
   - HarmBench dataset (400 objectives)
   - Baseline / attack strategies
-        |
-        v
-  LiteLLM proxy (port 4000)
-        |
-        v
-  Claude Haiku 4.5 (safety scorer, temperature 0.1)
+  - Objective scorer via LiteLLM → Claude Haiku 4.5
 ```
 
-- **Victim target**: `OpenAIChatTarget` pointing at llama.cpp server (configured via `.pyrit/.env`)
-- **Scorer**: `SelfAskTrueFalseScorer` with `TrueFalseQuestionPaths.TASK_ACHIEVED` rubric, routed through LiteLLM to Anthropic API
+- **Victim target**: `OpenAIChatTarget` routed through LiteLLM to llama.cpp server (model: `victim-llama`)
+- **Scorers**: `SelfAskTrueFalseScorer` with `TrueFalseQuestionPaths.TASK_ACHIEVED` rubric, all routed through LiteLLM
 - **Dataset**: HarmBench (fetched via `SeedDatasetProvider`)
 - **Storage**: In-memory (non-persistent)
-- **Results**: CSV export to `results/<animal>_<timestamp>/`
+- **Results**: CSV export to `results/run_<timestamp>/`
 
 ## What Has Been Done
 
 ### Infrastructure
 
 - Project scaffolded with `uv`, Python 3.13, `pyrit>=0.12.1`, `litellm[proxy]==1.83.7`
-- LiteLLM proxy config (`litellm_config.yaml`) with Claude Haiku 4.5 (`claude-haiku-4-5-20251001`)
-- Proxy auto-start with health check and 60s timeout in `redteam.py`
-- Environment config in `.pyrit/.env` for victim target endpoint
+- LiteLLM proxy config (`litellm_config.yaml`) with Claude Haiku 4.5 (`claude-haiku-4-5-20251001`), `victim-llama`, and `bf16-llama`
+- Shared proxy startup in `src/litellm_proxy.py`, managed by `main.py`
+- All model traffic (victim, scorers) routed through LiteLLM proxy
 
 ### Main Script (`redteam.py`)
 
@@ -65,17 +67,43 @@ Statistics CSV columns: `run_name`, `datetime`, `total_attacks`, `successes`, `f
 
 - Fixed `TrueFalseQuestionPaths.TASK_ACHIEVED` type mismatch: enum member returns `TrueFalseQuestionPaths` not `Path` — added `.value` to extract the underlying `PosixPath`
 - Fixed LiteLLM model ID: `anthropic/claude-3-5-haiku-20241022` (old, unavailable) → `anthropic/claude-haiku-4-5-20251001` (matches API key's available models)
-- Fixed scorer temperature consistency: all scorer models (BF16, Claude) now explicitly use `temperature=0.1` via `OpenAIChatTarget` constructor, ensuring deterministic and comparable scoring
+- Fixed scorer temperature consistency: all scorer models (BF16, Claude) now explicitly use `temperature=0.1`, ensuring deterministic and comparable scoring
+- Fixed PyRIT `True`/`False` JSON parsing: extended `patches.py` to normalize capitalized `score_value` before PyRIT validation, preventing Phase 1 scorer retries
+
+### LiteLLM Centralization
+
+Refactored all model traffic to route through a single LiteLLM proxy:
+
+- **New `src/litellm_proxy.py`**: shared proxy startup with health check (skips if already running)
+- **`litellm_config.yaml`**: defines `victim-llama` (:8080), `bf16-llama` (:8081), and `claude-haiku-4.5` (Anthropic API)
+- **`main.py`**: starts proxy at the beginning, terminates at exit; `--victim-model` flag selects LiteLLM model name
+- **`.pyrit/.env` no longer read** — all endpoint configuration is in `litellm_config.yaml`
+- Unified retry logic, rate limiting, and temperature control across all models
+
+### Two-Phase GPU Workflow
+
+The objective scorer now defaults to the victim model itself (not Claude), making Phase A fully self-contained — no API key needed:
+
+```bash
+# Phase A: quantized model on GPU, self-contained
+python main.py --only-attack
+
+# Phase B: swap to BF16, add Claude evaluation
+python main.py --skip-attack --latest --models bf16,claude
+```
+
+New CLI flags:
+- `--only-attack`: runs attacks + pyrit extraction only (no Claude/BF16). Default models: `pyrit`.
+- `--latest`: auto-finds newest `results/run_*` directory for `--skip-attack`.
 
 ### BF16 Control Run Support
 
-Added `--victim-endpoint` and `--victim-model` CLI args to `main.py`, allowing the attack target to be overridden without editing `.pyrit/.env`. This enables BF16 control runs:
+BF16 control runs use the same infrastructure:
 
 ```bash
-python main.py --victim-endpoint http://127.0.0.1:8081/v1 --models bf16,claude
+python main.py --victim-model bf16-llama --only-attack
+python main.py --skip-attack --latest --models bf16,claude
 ```
-
-The control attacks the full-precision model, scored by BF16 (self-assessment) and Claude (external judge), producing a no-quantization baseline for comparison.
 
 ### Verified End-to-End
 
@@ -111,7 +139,7 @@ agreement_with_claude_pct | 73.5 | 74.0 |  100.0
 - **No capability baseline**: No MMLU or general benchmark comparison to separate safety degradation from general quality loss
 - **Scorer rubric**: Using `TASK_ACHIEVED`; not yet tested with `TASK_ACHIEVED_REFINED`
 - **Temperature**: Victim server temperature not yet tuned for reproducibility vs. realism tradeoff
-- **Concurrency**: Hardcoded `max_concurrency=20`; not tuned for GPU throughput
+- **Concurrency**: Hardcoded `max_concurrency=10`; not tuned for GPU throughput
 
 ## Future Suggestions
 
