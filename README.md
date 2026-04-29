@@ -1,4 +1,4 @@
-# ollama-test-1
+# Guardrail Testing of Llama-3.1-8B-Instruct
 
 Quantization safety red-teaming pipeline. Uses [PyRIT](https://github.com/Azure/PyRIT) to automate attacks against locally-served GGUF models via llama.cpp, then independently scores each response with three different judge models to measure how quantization degrades safety guardrails. See `exploiter_plan.md` for the full research design.
 
@@ -35,8 +35,8 @@ llama.cpp :8080 (quantized victim)  ←  PyRIT attacks  ←  HarmBench
 
 ## Prerequisites
 
-- **GPU**: AMD 7900 XTX (24 GB VRAM) with ROCm 6.4+
-- **Software**: Python 3.13+, [uv](https://docs.astral.sh/uv/), [llama.cpp](https://github.com/ggml-org/llama.cpp) built with ROCm/HIP
+- **(Optional) GPU**: AMD 7900 XTX (24 GB VRAM) with ROCm 6.4+
+- **Software**: Python 3.13+, [uv](https://docs.astral.sh/uv/), [llama.cpp](https://github.com/ggml-org/llama.cpp) built with ROCm/HIP/BLAS
 - **API key**: Anthropic API key for Claude Haiku 4.5 scoring
 
 ## Setup
