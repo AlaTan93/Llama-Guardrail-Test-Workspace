@@ -5,7 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "pyrit>=0.12.1",
+    "pyrit>=0.13.0",
     "anthropic>=0.50.0",
     "litellm[proxy]==1.83.7",
 ]

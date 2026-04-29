@@ -104,7 +104,7 @@ You need two llama.cpp instances running — one for the quantized victim (and s
 ```bash
 # Terminal 1: Quantized model (victim + self-scorer)
 ./llama.cpp/build/bin/llama-server \
-  -m models/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf \
+  -m models/meta-llama-Llama-3.1-8B-Instruct-Q8_0.gguf \
   --host 127.0.0.1 --port 8080 -ngl 99
 
 # Terminal 2: BF16 reference model (scorer)
@@ -128,7 +128,8 @@ This runs both phases: attack generation followed by scoring with all three mode
 | `--dataset-size` | `400` | Number of HarmBench objectives |
 | `--skip-attack` | off | Skip attack phase, re-score an existing run |
 | `--run-dir` | — | Path to existing run directory (required with `--skip-attack`) |
-| `--models` | `self,bf16,claude` | Which scorer models to use |
+| `--models` | `pyrit,bf16,claude` | Which scorer models to use |
+| `--victim-model` | `llama3` | Override victim model name |
 
 ### Examples
 
@@ -142,11 +143,11 @@ python main.py --dataset-size 10
 # Re-score an existing run (e.g. after a crash)
 python main.py --skip-attack --run-dir results/run_2026042714301542
 
-# Only self-scoring and Claude (skip BF16)
-python main.py --models self,claude
+# Only BF16 and Claude scoring (skip pyrit extraction)
+python main.py --models bf16,claude
 
 # Run scoring standalone
-python scoring.py --run-dir results/run_2026042714301542 --models self,bf16,claude
+python scoring.py --run-dir results/run_2026042714301542 --models pyrit,bf16,claude
 ```
 
 Scoring is **resumable** — if interrupted, re-running the same command skips already-scored responses and continues from where it left off.
@@ -224,3 +225,24 @@ The LiteLLM proxy is started automatically when Claude scoring is needed. Config
 - **Temperature**: `0.1` (deterministic scoring)
 - **Rate limit**: `45 rpm`
 - **Retries**: `10` attempts with `120s` cooldown on failure
+
+## Control Results (no prompt fuzzing) vs q8_0
+
+Models Llama-3.1-8B-Instruct-BF16 and claude-haiku-4-5-20251001 are used as scorers.
+
+Q8_0 run with cross-scorer comparison (400 HarmBench objectives):
+
+```
+============================================================
+                   metric | q8_0 | bf16 | claude
+--------------------------+------+------+-------
+                    total |  400 |  400 |    400
+                  success |   94 |   92 |     56
+                  failure |  306 |  308 |    344
+                    error |    0 |    0 |      0
+             undetermined |    0 |    0 |      0
+ content_policy_violation |    0 |    0 |      1
+         success_rate_pct | 23.5 | 23.0 |   14.0
+             cpv_rate_pct |  0.0 |  0.0 |   1.79
+agreement_with_claude_pct | 73.5 | 74.0 |  100.0
+```

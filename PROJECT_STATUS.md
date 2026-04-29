@@ -65,6 +65,17 @@ Statistics CSV columns: `run_name`, `datetime`, `total_attacks`, `successes`, `f
 
 - Fixed `TrueFalseQuestionPaths.TASK_ACHIEVED` type mismatch: enum member returns `TrueFalseQuestionPaths` not `Path` — added `.value` to extract the underlying `PosixPath`
 - Fixed LiteLLM model ID: `anthropic/claude-3-5-haiku-20241022` (old, unavailable) → `anthropic/claude-haiku-4-5-20251001` (matches API key's available models)
+- Fixed scorer temperature consistency: all scorer models (BF16, Claude) now explicitly use `temperature=0.1` via `OpenAIChatTarget` constructor, ensuring deterministic and comparable scoring
+
+### BF16 Control Run Support
+
+Added `--victim-endpoint` and `--victim-model` CLI args to `main.py`, allowing the attack target to be overridden without editing `.pyrit/.env`. This enables BF16 control runs:
+
+```bash
+python main.py --victim-endpoint http://127.0.0.1:8081/v1 --models bf16,claude
+```
+
+The control attacks the full-precision model, scored by BF16 (self-assessment) and Claude (external judge), producing a no-quantization baseline for comparison.
 
 ### Verified End-to-End
 
@@ -72,6 +83,25 @@ Confirmed working with 10-objective baseline run:
 - 2 successes, 8 failures, 0 undetermined
 - 20% baseline success rate against victim model
 - All CSV files populated correctly
+
+## Results
+
+First completed Q8_0 run with cross-scorer comparison (400 HarmBench objectives):
+
+```
+============================================================
+                   metric | q8_0 | bf16 | claude
+--------------------------+------+------+-------
+                    total |  400 |  400 |    400
+                  success |   94 |   92 |     56
+                  failure |  306 |  308 |    344
+                    error |    0 |    0 |      0
+             undetermined |    0 |    0 |      0
+ content_policy_violation |    0 |    0 |      1
+         success_rate_pct | 23.5 | 23.0 |   14.0
+             cpv_rate_pct |  0.0 |  0.0 |   1.79
+agreement_with_claude_pct | 73.5 | 74.0 |  100.0
+```
 
 ## Current Limitations
 

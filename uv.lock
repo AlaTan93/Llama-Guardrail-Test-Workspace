@@ -1514,7 +1514,7 @@ dependencies = [
 requires-dist = [
     { name = "anthropic", specifier = ">=0.50.0" },
     { name = "litellm", extras = ["proxy"], specifier = "==1.83.7" },
-    { name = "pyrit", specifier = ">=0.12.1" },
+    { name = "pyrit", specifier = ">=0.13.0" },
 ]
 
 [[package]]
@@ -2004,16 +2004,16 @@ wheels = [
 
 [[package]]
 name = "pypdf"
-version = "6.9.2"
+version = "6.10.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/31/83/691bdb309306232362503083cb15777491045dd54f45393a317dc7d8082f/pypdf-6.9.2.tar.gz", hash = "sha256:7f850faf2b0d4ab936582c05da32c52214c2b089d61a316627b5bfb5b0dab46c", size = 5311837, upload-time = "2026-03-23T14:53:27.983Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7b/3f/9f2167401c2e94833ca3b69535bad89e533b5de75fefe4197a2c224baec2/pypdf-6.10.2.tar.gz", hash = "sha256:7d09ce108eff6bf67465d461b6ef352dcb8d84f7a91befc02f904455c6eea11d", size = 5315679, upload-time = "2026-04-15T16:37:36.978Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a5/7e/c85f41243086a8fe5d1baeba527cb26a1918158a565932b41e0f7c0b32e9/pypdf-6.9.2-py3-none-any.whl", hash = "sha256:662cf29bcb419a36a1365232449624ab40b7c2d0cfc28e54f42eeecd1fd7e844", size = 333744, upload-time = "2026-03-23T14:53:26.573Z" },
+    { url = "https://files.pythonhosted.org/packages/0c/d6/1d5c60cc17bbdf37c1552d9c03862fc6d32c5836732a0415b2d637edc2d0/pypdf-6.10.2-py3-none-any.whl", hash = "sha256:aa53be9826655b51c96741e5d7983ca224d898ac0a77896e64636810517624aa", size = 336308, upload-time = "2026-04-15T16:37:34.851Z" },
 ]
 
 [[package]]
 name = "pyrit"
-version = "0.12.1"
+version = "0.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -2038,6 +2038,7 @@ dependencies = [
     { name = "openpyxl" },
     { name = "pillow" },
     { name = "pydantic" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "pyodbc" },
     { name = "pypdf" },
     { name = "python-docx" },
@@ -2055,9 +2056,9 @@ dependencies = [
     { name = "uvicorn", extra = ["standard"] },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bd/6c/b1c8ed7f7eb4b6e34a3abb6ad90c5ba2e94497d99e4d0aad270ac0a8412e/pyrit-0.12.1.tar.gz", hash = "sha256:6e9d5362ba9209b459d2b2f1c2f312d9e532fd784552287044f86804137c4937", size = 6248738, upload-time = "2026-04-09T21:48:32.451Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/96/21/1b18674339295cd050d0baa9f331525ae27baa4d6f456e535e3b36cb55f0/pyrit-0.13.0.tar.gz", hash = "sha256:50f38f9498c18caabdb1a29c205e442961e4d044955607b2147652da9bf42563", size = 6273961, upload-time = "2026-04-17T20:00:23.056Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4e/c8/97791872f8656e269b5c8bcffc574106508a4995c6b9e25e68073bccd016/pyrit-0.12.1-py3-none-any.whl", hash = "sha256:837f969bb0847ac671540bc776c45cee49598aff3c20ff61a8b70674003e81d6", size = 6746411, upload-time = "2026-04-09T21:48:29.483Z" },
+    { url = "https://files.pythonhosted.org/packages/fe/37/ad55c2128a4475e1eb243b7f31c7e873e05d72bce32daa58527d6c075de8/pyrit-0.13.0-py3-none-any.whl", hash = "sha256:31dfc425377833cd100494f7faa8b8e6bd25b7cb4f5b27cd17108e0e063ab125", size = 6766303, upload-time = "2026-04-17T20:00:20.984Z" },
 ]
 
 [[package]]

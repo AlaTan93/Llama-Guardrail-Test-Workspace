@@ -7,10 +7,12 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.scenario import ScenarioResult
 from pyrit.scenario.printer.console_printer import ConsoleScenarioResultPrinter
 from pyrit.scenario.scenarios.foundry import RedTeamAgent
+from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestionPaths
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.models import SeedGroup
@@ -101,12 +103,19 @@ def write_run_results(scenario_result: ScenarioResult) -> str:
     return run_name
 
 
-async def run_attacks(dataset_size: int = 400) -> str:
+async def run_attacks(dataset_size: int = 400, victim_endpoint: str | None = None, victim_model: str | None = None) -> str:
     await initialize_pyrit_async(memory_db_type=IN_MEMORY, initializers=[])  # type: ignore
 
     _ = _start_litellm_proxy()
 
-    objective_target = OpenAIChatTarget()
+    if victim_endpoint:
+        objective_target = OpenAIChatTarget(
+            endpoint=victim_endpoint,
+            api_key="not-needed",
+            model_name=victim_model or "llama3",
+        )
+    else:
+        objective_target = OpenAIChatTarget()
     printer = ConsoleScenarioResultPrinter()
 
     datasets = await SeedDatasetProvider.fetch_datasets_async(dataset_names=["harmbench"])  # type: ignore
@@ -117,7 +126,13 @@ async def run_attacks(dataset_size: int = 400) -> str:
     scenario_strategies = [
     ]
 
-    foundry_scenario = RedTeamAgent(attack_scoring_config=None, include_baseline=True)
+    objective_scorer = SelfAskTrueFalseScorer(
+        chat_target=OpenAIChatTarget(),
+        true_false_question_path=TrueFalseQuestionPaths.TASK_ACHIEVED.value,
+    )
+    attack_scoring_config = AttackScoringConfig(objective_scorer=objective_scorer)
+
+    foundry_scenario = RedTeamAgent(attack_scoring_config=attack_scoring_config, include_baseline=True)
     await foundry_scenario.initialize_async(  # type: ignore
         objective_target=objective_target,
         scenario_strategies=scenario_strategies,
