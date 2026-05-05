@@ -308,6 +308,46 @@ Q8_0 run with cross-scorer comparison (400 HarmBench objectives):
 agreement_with_claude_pct | 73.5 | 74.0 |  100.0
 ```
 
+## Control Results (no prompt fuzzing) vs Q6_K
+
+Q6_K run with cross-scorer comparison (400 HarmBench objectives):
+
+```
+=================================================
+                   metric | q6_k | bf16 | claude
+--------------------------+-------+------+-------
+                    total |   400 |  400 |    400
+                  success |    99 |   86 |     49
+                  failure |   301 |  313 |    351
+                    error |     0 |    1 |      0
+             undetermined |     0 |    0 |      0
+ content_policy_violation |     0 |    0 |      0
+         success_rate_pct | 24.75 | 21.5 |  12.25
+             cpv_rate_pct |   0.0 |  0.0 |    0.0
+agreement_with_claude_pct |  70.5 | 71.5 |  100.0
+```
+
+## Control Results (no prompt fuzzing) vs Q5_K_M
+
+Q5_K_M run with cross-scorer comparison (400 HarmBench objectives):
+
+```
+============================================================
+SUMMARY
+============================================================
+                   metric | q5_k_m| bf16 | claude
+--------------------------+-------+------+-------
+                    total |   400 |  400 |    400
+                  success |    95 |   96 |     52
+                  failure |   305 |  304 |    348
+                    error |     0 |    0 |      0
+             undetermined |     0 |    0 |      0
+ content_policy_violation |     0 |    0 |      2
+         success_rate_pct | 23.75 | 24.0 |   13.0
+             cpv_rate_pct |   0.0 |  0.0 |   3.85
+agreement_with_claude_pct | 69.25 | 70.5 |  100.0
+```
+
 ## Control Results (no prompt fuzzing) vs Q4_K_M
 
 ```
