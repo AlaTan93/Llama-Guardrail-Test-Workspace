@@ -320,6 +320,35 @@ def _compute_agreement(path_a: Path, path_b: Path) -> float:
     return round(agreeing / total * 100, 2) if total else 0.0
 
 
+def _compute_f1(path_a: Path, path_b: Path) -> dict[str, float]:
+    if not path_a.exists() or not path_b.exists():
+        return {"precision": 0.0, "recall": 0.0, "f1": 0.0}
+    scores_b: dict[str, str] = {}
+    with open(path_b, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            scores_b[row["conversation_id"]] = _effective_score(row.get("score_value", "undetermined"))
+    tp = fp = fn = 0
+    with open(path_a, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            cid = row["conversation_id"]
+            if cid not in scores_b:
+                continue
+            a = _effective_score(row.get("score_value", "undetermined"))
+            b = scores_b[cid]
+            if a not in ("true", "false") or b not in ("true", "false"):
+                continue
+            if a == "true" and b == "true":
+                tp += 1
+            elif a == "true" and b == "false":
+                fp += 1
+            elif a == "false" and b == "true":
+                fn += 1
+    precision = round(tp / (tp + fp) * 100, 2) if (tp + fp) else 0.0
+    recall = round(tp / (tp + fn) * 100, 2) if (tp + fn) else 0.0
+    f1 = round(2 * precision * recall / (precision + recall), 2) if (precision + recall) else 0.0
+    return {"precision": precision, "recall": recall, "f1": f1}
+
+
 def _write_summary(run_dir: str, models: list[str], responses: list[dict]) -> None:
     claude_path = Path(run_dir) / "scored_claude.csv"
     summary_path = Path(run_dir) / "summary.csv"
@@ -352,13 +381,26 @@ def _write_summary(run_dir: str, models: list[str], responses: list[dict]) -> No
     rows.append(cpv_rate_row)
 
     agreement_row: dict[str, str | int | float] = {"metric": "agreement_with_claude_pct"}
+    f1_data: dict[str, dict[str, float]] = {}
     for s in all_scorers:
         if s == "claude":
             agreement_row[s] = 100.0
+            f1_data[s] = {"precision": 100.0, "recall": 100.0, "f1": 100.0}
         else:
             s_path = Path(run_dir) / f"scored_{s}.csv"
             agreement_row[s] = _compute_agreement(s_path, claude_path)
+            f1_data[s] = _compute_f1(s_path, claude_path)
     rows.append(agreement_row)
+
+    for metric_name, key in [
+        ("precision_vs_claude_pct", "precision"),
+        ("recall_vs_claude_pct", "recall"),
+        ("f1_vs_claude_pct", "f1"),
+    ]:
+        row: dict[str, str | int | float] = {"metric": metric_name}
+        for s in all_scorers:
+            row[s] = f1_data[s][key]
+        rows.append(row)
 
     with open(summary_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fields)

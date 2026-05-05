@@ -287,6 +287,9 @@ Success includes content policy violation records, as an assumption is made that
          success_rate_pct |  22.5 |  12.25
              cpv_rate_pct |   0.0 |   2.04
 agreement_with_claude_pct | 72.25 |  100.0
+  precision_vs_claude_pct |  23.4 |  100.0
+     recall_vs_claude_pct | 39.29 |  100.0
+         f1_vs_claude_pct | 29.33 |  100.0
 ```
 
 ## Control Results (no prompt fuzzing) vs Q8_0
@@ -306,6 +309,9 @@ Q8_0 run with cross-scorer comparison (400 HarmBench objectives):
          success_rate_pct | 23.5 | 23.0 |   14.0
              cpv_rate_pct |  0.0 |  0.0 |   1.79
 agreement_with_claude_pct | 73.5 | 74.0 |  100.0
+  precision_vs_claude_pct | 23.4 | 23.91|  100.0
+     recall_vs_claude_pct | 39.29| 39.29|  100.0
+         f1_vs_claude_pct | 29.33| 29.73|  100.0
 ```
 
 ## Control Results (no prompt fuzzing) vs Q6_K
@@ -314,17 +320,20 @@ Q6_K run with cross-scorer comparison (400 HarmBench objectives):
 
 ```
 =================================================
-                   metric | q6_k | bf16 | claude
---------------------------+-------+------+-------
-                    total |   400 |  400 |    400
-                  success |    99 |   86 |     49
-                  failure |   301 |  313 |    351
-                    error |     0 |    1 |      0
-             undetermined |     0 |    0 |      0
- content_policy_violation |     0 |    0 |      0
-         success_rate_pct | 24.75 | 21.5 |  12.25
-             cpv_rate_pct |   0.0 |  0.0 |    0.0
-agreement_with_claude_pct |  70.5 | 71.5 |  100.0
+                   metric | q6_k  | bf16  | claude
+--------------------------+-------+-------+-------
+                    total |   400 |  400  |    400
+                  success |    99 |   86  |     49
+                  failure |   301 |  313  |    351
+                    error |     0 |    1  |      0
+             undetermined |     0 |    0  |      0
+ content_policy_violation |     0 |    0  |      0
+         success_rate_pct | 24.75 | 21.5  |  12.25
+             cpv_rate_pct |   0.0 |  0.0  |    0.0
+agreement_with_claude_pct |  70.5 | 71.5  |  100.0
+  precision_vs_claude_pct | 15.15 | 12.79 |  100.0
+     recall_vs_claude_pct | 30.61 | 22.45 |  100.0
+         f1_vs_claude_pct | 20.27 |  16.3 |  100.0
 ```
 
 ## Control Results (no prompt fuzzing) vs Q5_K_M
@@ -335,17 +344,20 @@ Q5_K_M run with cross-scorer comparison (400 HarmBench objectives):
 ============================================================
 SUMMARY
 ============================================================
-                   metric | q5_k_m| bf16 | claude
---------------------------+-------+------+-------
-                    total |   400 |  400 |    400
-                  success |    95 |   96 |     52
-                  failure |   305 |  304 |    348
-                    error |     0 |    0 |      0
-             undetermined |     0 |    0 |      0
- content_policy_violation |     0 |    0 |      2
-         success_rate_pct | 23.75 | 24.0 |   13.0
-             cpv_rate_pct |   0.0 |  0.0 |   3.85
-agreement_with_claude_pct | 69.25 | 70.5 |  100.0
+                   metric | q5_k_m| bf16  | claude
+--------------------------+-------+-------+-------
+                    total |   400 |  400  |    400
+                  success |    95 |   96  |     52
+                  failure |   305 |  304  |    348
+                    error |     0 |    0  |      0
+             undetermined |     0 |    0  |      0
+ content_policy_violation |     0 |    0  |      2
+         success_rate_pct | 23.75 | 24.0  |   13.0
+             cpv_rate_pct |   0.0 |  0.0  |   3.85
+agreement_with_claude_pct | 69.25 |  70.5 |  100.0
+  precision_vs_claude_pct | 12.63 | 15.62 |  100.0
+     recall_vs_claude_pct | 23.08 | 28.85 |  100.0
+         f1_vs_claude_pct | 16.33 | 20.27 |  100.0
 ```
 
 ## Control Results (no prompt fuzzing) vs Q4_K_M
@@ -363,4 +375,29 @@ agreement_with_claude_pct | 69.25 | 70.5 |  100.0
          success_rate_pct |  40.5 | 20.25 |   12.5
              cpv_rate_pct |   0.0 |   0.0 |    0.0
 agreement_with_claude_pct |  58.0 | 73.75 |  100.0
+  precision_vs_claude_pct | 13.58 | 16.05 |  100.0
+     recall_vs_claude_pct |  44.0 |  26.0 |  100.0
+         f1_vs_claude_pct | 20.75 | 19.85 |  100.0
+```
+
+## Control Results (no prompt fuzzing) vs Q3_K_M
+
+```
+============================================================
+SUMMARY
+============================================================
+                   metric | q3km  |  bf16 | claude
+--------------------------+-------+-------+-------
+                    total |   400 |   400 |    400
+                  success |   153 |    84 |     34
+                  failure |   247 |   316 |    366
+                    error |     0 |     0 |      0
+             undetermined |     0 |     0 |      0
+ content_policy_violation |     0 |     0 |      1
+         success_rate_pct | 38.25 |  21.0 |    8.5
+             cpv_rate_pct |   0.0 |   0.0 |   2.94
+agreement_with_claude_pct | 61.25 |  75.5 |  100.0
+  precision_vs_claude_pct | 10.46 |  11.9 |  100.0
+     recall_vs_claude_pct | 47.06 | 29.41 |  100.0
+         f1_vs_claude_pct | 17.12 | 16.94 |  100.0
 ```
