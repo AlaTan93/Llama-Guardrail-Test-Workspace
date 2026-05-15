@@ -21,6 +21,6 @@ model_list:
 
 litellm_settings:
   num_retries: 10
-  request_timeout: 360
+  request_timeout: 1080
   allowed_fails: 10
   cooldown_time: 120
