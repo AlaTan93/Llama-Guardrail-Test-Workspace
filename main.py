@@ -65,7 +65,7 @@ def main():
     parser.add_argument("--run-dir", type=str, default=None, help="Path to existing run dir (required with --skip-attack unless --latest)")
     parser.add_argument("--latest", action="store_true", help="Use the most recent run directory (with --skip-attack)")
     parser.add_argument("--only-attack", action="store_true", help="Run attacks + victim self-scoring only (no Claude/BF16)")
-    parser.add_argument("--models", default=None, help="Comma-separated scorers (default: asr_pyrit for --only-attack, else asr_pyrit,asr_bf16,asr_claude,strict_bf16,strict_claude). Also available: strict_pyrit,lenient_claude,lenient_bf16,lenient_pyrit")
+    parser.add_argument("--models", default=None, help="Comma-separated scorers (default: asr_pyrit for --only-attack, else asr_pyrit,asr_bf16,asr_claude,strict_bf16,strict_claude,lenient_bf16,lenient_claude). Also available: strict_pyrit,lenient_pyrit")
     parser.add_argument("--victim-model", type=str, default="victim-llama", help="LiteLLM model name for victim target (default: victim-llama)")
     parser.add_argument("--e2e", action="store_true", help="End-to-end: auto-manage llama.cpp servers and run all phases for a tier")
     parser.add_argument("--tier", type=str, default=None, help="Quantization tier for --e2e (e.g. Q8_0, Q4_K_M, BF16)")
@@ -90,7 +90,7 @@ def main():
     elif args.only_attack:
         models = ["asr_pyrit"]
     else:
-        models = ["asr_pyrit", "asr_bf16", "asr_claude", "strict_bf16", "strict_claude"]
+        models = ["asr_pyrit", "asr_bf16", "asr_claude", "strict_bf16", "strict_claude", "lenient_bf16", "lenient_claude"]
 
     run_dir = args.run_dir
     if args.latest:

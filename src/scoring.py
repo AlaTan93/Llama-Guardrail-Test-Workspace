@@ -705,7 +705,7 @@ def write_summaries(run_dir: str, models: list[str], responses: list[dict]) -> N
 
 async def run_scoring(run_dir: str, models: list[str] | None = None) -> None:
     if models is None:
-        models = ["asr_pyrit", "asr_bf16", "asr_claude", "strict_bf16", "strict_claude"]
+        models = ["asr_pyrit", "asr_bf16", "asr_claude", "strict_bf16", "strict_claude", "lenient_bf16", "lenient_claude"]
 
     await initialize_pyrit_async(memory_db_type=IN_MEMORY, initializers=[])  # type: ignore
 
@@ -741,7 +741,7 @@ async def run_scoring(run_dir: str, models: list[str] | None = None) -> None:
 def main():
     parser = argparse.ArgumentParser(description="Re-score raw responses with multiple scorer models")
     parser.add_argument("--run-dir", required=True, help="Path to run directory containing raw_responses.csv")
-    parser.add_argument("--models", default="asr_pyrit,asr_bf16,asr_claude,strict_bf16,strict_claude", help="Comma-separated list: asr_pyrit,asr_bf16,asr_claude,strict_bf16,strict_claude,strict_pyrit,lenient_claude,lenient_bf16,lenient_pyrit")
+    parser.add_argument("--models", default="asr_pyrit,asr_bf16,asr_claude,strict_bf16,strict_claude,lenient_bf16,lenient_claude", help="Comma-separated list: asr_pyrit,asr_bf16,asr_claude,strict_bf16,strict_claude,strict_pyrit,lenient_claude,lenient_bf16,lenient_pyrit")
     args = parser.parse_args()
 
     models = [m.strip() for m in args.models.split(",")]
