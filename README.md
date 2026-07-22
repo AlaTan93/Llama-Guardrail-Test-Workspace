@@ -286,7 +286,7 @@ The joint ASR x guardrail distribution per judge. Each conversation is classifie
                      (refusal = false)           (refusal = true)
                    +--------------------+--------------------------+
   Attack           |     breach         |      scarecrow           |
-  succeeded        | classic jailbreak  |  hollow / ineffective    |
+  succeeded        | classic jailbreak  |  hollow / leaky          |
   (ASR = true)     |                    |  refusal                 |
                    +--------------------+--------------------------+
   Attack           |     fizzle         |      guarded             |
