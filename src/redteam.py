@@ -7,8 +7,8 @@ from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.scenario import ScenarioResult
 from pyrit.scenario.printer.console_printer import ConsoleScenarioResultPrinter
-from pyrit.scenario.scenarios.foundry import RedTeamAgent
-from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestionPaths
+from pyrit.scenario.scenarios.foundry import RedTeamAgent, FoundryStrategy
+from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestionPaths, SelfAskRefusalScorer
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.models import SeedGroup
@@ -74,6 +74,7 @@ async def run_attacks(dataset_size: int = 400, victim_model_name: str = "victim-
     dataset_config = DatasetConfiguration(seed_groups=seed_groups, max_dataset_size=dataset_size)
 
     scenario_strategies = [
+        FoundryStrategy.Url
     ]
 
     objective_scorer = SelfAskTrueFalseScorer(
@@ -87,7 +88,7 @@ async def run_attacks(dataset_size: int = 400, victim_model_name: str = "victim-
     )
     attack_scoring_config = AttackScoringConfig(objective_scorer=objective_scorer)
 
-    foundry_scenario = RedTeamAgent(attack_scoring_config=attack_scoring_config, include_baseline=True)
+    foundry_scenario = RedTeamAgent(attack_scoring_config=attack_scoring_config, include_baseline=False)
     await foundry_scenario.initialize_async(  # type: ignore
         objective_target=objective_target,
         scenario_strategies=scenario_strategies,

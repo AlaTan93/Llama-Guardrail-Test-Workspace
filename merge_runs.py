@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 from src.redteam import RAW_FIELDS
-from src.scoring import SCORED_FIELDS, _write_summary
+from src.scoring import SCORED_FIELDS, write_summaries
 
 RESULTS_DIR = Path(__file__).parent / "results"
 
@@ -107,8 +107,8 @@ def merge_runs(target: Path, sources: list[Path]) -> None:
         return
 
     print()
-    print("--- Regenerating summary.csv ---")
-    _write_summary(str(target), merged_scorers, all_raw)
+    print("--- Regenerating summaries ---")
+    write_summaries(str(target), merged_scorers, all_raw)
     print("Done.")
 
 

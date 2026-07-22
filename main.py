@@ -65,7 +65,7 @@ def main():
     parser.add_argument("--run-dir", type=str, default=None, help="Path to existing run dir (required with --skip-attack unless --latest)")
     parser.add_argument("--latest", action="store_true", help="Use the most recent run directory (with --skip-attack)")
     parser.add_argument("--only-attack", action="store_true", help="Run attacks + victim self-scoring only (no Claude/BF16)")
-    parser.add_argument("--models", default=None, help="Comma-separated scorers (default: pyrit,victim for --only-attack, else pyrit,victim,bf16,claude)")
+    parser.add_argument("--models", default=None, help="Comma-separated scorers (default: pyrit for --only-attack, else pyrit,bf16,claude,refusal_bf16,refusal_claude)")
     parser.add_argument("--victim-model", type=str, default="victim-llama", help="LiteLLM model name for victim target (default: victim-llama)")
     args = parser.parse_args()
 
@@ -77,7 +77,7 @@ def main():
     elif args.only_attack:
         models = ["pyrit"]
     else:
-        models = ["pyrit", "bf16", "claude"]
+        models = ["pyrit", "bf16", "claude", "refusal_bf16", "refusal_claude"]
 
     run_dir = args.run_dir
     if args.latest:
