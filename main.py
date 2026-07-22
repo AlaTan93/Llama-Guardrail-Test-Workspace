@@ -65,9 +65,22 @@ def main():
     parser.add_argument("--run-dir", type=str, default=None, help="Path to existing run dir (required with --skip-attack unless --latest)")
     parser.add_argument("--latest", action="store_true", help="Use the most recent run directory (with --skip-attack)")
     parser.add_argument("--only-attack", action="store_true", help="Run attacks + victim self-scoring only (no Claude/BF16)")
-    parser.add_argument("--models", default=None, help="Comma-separated scorers (default: pyrit for --only-attack, else pyrit,bf16,claude,refusal_bf16,refusal_claude)")
+    parser.add_argument("--models", default=None, help="Comma-separated scorers (default: asr_pyrit for --only-attack, else asr_pyrit,asr_bf16,asr_claude,strict_bf16,strict_claude). Also available: strict_pyrit,lenient_claude,lenient_bf16,lenient_pyrit")
     parser.add_argument("--victim-model", type=str, default="victim-llama", help="LiteLLM model name for victim target (default: victim-llama)")
+    parser.add_argument("--e2e", action="store_true", help="End-to-end: auto-manage llama.cpp servers and run all phases for a tier")
+    parser.add_argument("--tier", type=str, default=None, help="Quantization tier for --e2e (e.g. Q8_0, Q4_K_M, BF16)")
+    parser.add_argument("--config", type=str, default=None, help="Path to e2e config YAML (default: src/e2e_config.yaml)")
     args = parser.parse_args()
+
+    if args.e2e:
+        if args.skip_attack or args.only_attack:
+            parser.error("--e2e is mutually exclusive with --skip-attack and --only-attack")
+        if not args.tier:
+            parser.error("--tier is required with --e2e")
+        from src.e2e import run_e2e, DEFAULT_CONFIG
+        config_path = args.config or DEFAULT_CONFIG
+        asyncio.run(run_e2e(args.tier, args.dataset_size, config_path))
+        return
 
     if args.only_attack and args.skip_attack:
         parser.error("--only-attack and --skip-attack are mutually exclusive")
@@ -75,9 +88,9 @@ def main():
     if args.models is not None:
         models = [m.strip() for m in args.models.split(",")]
     elif args.only_attack:
-        models = ["pyrit"]
+        models = ["asr_pyrit"]
     else:
-        models = ["pyrit", "bf16", "claude", "refusal_bf16", "refusal_claude"]
+        models = ["asr_pyrit", "asr_bf16", "asr_claude", "strict_bf16", "strict_claude"]
 
     run_dir = args.run_dir
     if args.latest:

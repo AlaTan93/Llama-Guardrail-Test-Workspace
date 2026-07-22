@@ -1,0 +1,37 @@
+# End-to-end pipeline server configuration.
+#
+# Controls how the orchestrator (src/e2e.py) starts/stops llama.cpp servers
+# and maps quantization tiers to GGUF files. Adjust binary path, GPU layers,
+# and extra args to match your llama.cpp build and hardware.
+
+server:
+  binary: "./llama.cpp/build/bin/llama-server"
+  host: "127.0.0.1"
+  ngl: 99
+  extra_args: []          # additional CLI flags, e.g. ["-c", "8192", "-b", "512"]
+
+models_dir: "./models"
+
+# tier → GGUF filename (relative to models_dir)
+tiers:
+  Q2_K:   "meta-llama-Llama-3.1-8B-Instruct-Q2_K.gguf"
+  Q3_K_S: "meta-llama-Llama-3.1-8B-Instruct-Q3_K_S.gguf"
+  Q3_K_M: "meta-llama-Llama-3.1-8B-Instruct-Q3_K_M.gguf"
+  Q3_K_L: "meta-llama-Llama-3.1-8B-Instruct-Q3_K_L.gguf"
+  Q4_K_S: "meta-llama-Llama-3.1-8B-Instruct-Q4_K_S.gguf"
+  Q4_K_M: "meta-llama-Llama-3.1-8B-Instruct-Q4_K_M.gguf"
+  Q5_K_S: "meta-llama-Llama-3.1-8B-Instruct-Q5_K_S.gguf"
+  Q5_K_M: "meta-llama-Llama-3.1-8B-Instruct-Q5_K_M.gguf"
+  Q6_K:   "meta-llama-Llama-3.1-8B-Instruct-Q6_K.gguf"
+  Q8_0:   "meta-llama-Llama-3.1-8B-Instruct-Q8_0.gguf"
+  IQ4_XS: "meta-llama-Llama-3.1-8B-Instruct-IQ4_XS.gguf"
+  BF16:   "Llama-3.1-8B-Instruct-BF16.gguf"
+
+ports:
+  victim: 8080
+  bf16:   8081
+
+timeouts:
+  startup: 120            # seconds to wait for server /health on boot
+  shutdown: 30            # grace period (SIGTERM) before SIGKILL
+  gpu_release_delay: 5    # seconds to sleep after stop, before starting next server

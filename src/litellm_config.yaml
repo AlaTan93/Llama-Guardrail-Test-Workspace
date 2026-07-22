@@ -1,5 +1,15 @@
 model_list:
+  # Primary: AWS Bedrock (cross-region inference via us. prefix)
   - model_name: claude-haiku-4.5
+    litellm_params:
+      model: bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0
+      aws_access_key_id: os.environ/AWS_ACCESS_KEY_ID
+      aws_secret_access_key: os.environ/AWS_SECRET_ACCESS_KEY
+      aws_region_name: os.environ/AWS_REGION_NAME
+      temperature: 0.1
+
+  # Fallback: Anthropic direct API (used when Bedrock errors after retries)
+  - model_name: claude-haiku-4.5-anthropic
     litellm_params:
       model: anthropic/claude-haiku-4-5-20251001
       api_key: os.environ/ANTHROPIC_API_KEY
@@ -18,6 +28,10 @@ model_list:
       api_base: http://127.0.0.1:8081/v1
       api_key: not-needed
       temperature: 0.1
+
+router_settings:
+  fallbacks:
+    - claude-haiku-4.5: [claude-haiku-4.5-anthropic]
 
 litellm_settings:
   num_retries: 10

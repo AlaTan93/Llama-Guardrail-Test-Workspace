@@ -8,4 +8,5 @@ dependencies = [
     "pyrit>=0.13.0",
     "anthropic>=0.50.0",
     "litellm[proxy]==1.83.7",
+    "boto3>=1.36.0",
 ]
