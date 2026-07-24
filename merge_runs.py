@@ -1,26 +1,10 @@
 import argparse
-import csv
 import sys
 from pathlib import Path
 
-from src.redteam import RAW_FIELDS
-from src.scoring import SCORED_FIELDS, write_summaries
-
-RESULTS_DIR = Path(__file__).parent / "results"
-
-
-def _load_csv(path: Path) -> list[dict]:
-    if not path.exists():
-        return []
-    with open(path, newline="", encoding="utf-8") as f:
-        return list(csv.DictReader(f))
-
-
-def _write_csv(path: Path, rows: list[dict], fields: list[str]) -> None:
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fields)
-        writer.writeheader()
-        writer.writerows(rows)
+from src.config import RAW_FIELDS, SCORED_FIELDS, RESULTS_DIR
+from src.csv_io import load_csv, write_csv
+from src.summaries import write_summaries
 
 
 def _resolve_run_dir(name: str) -> Path:
@@ -58,11 +42,11 @@ def merge_runs(target: Path, sources: list[Path]) -> None:
     print("--- Merging raw_responses.csv ---")
     all_raw: list[dict] = []
     for d in all_dirs:
-        rows = _load_csv(d / "raw_responses.csv")
+        rows = load_csv(d / "raw_responses.csv")
         print(f"  {d.name}: {len(rows)} rows")
         all_raw.extend(rows)
 
-    _write_csv(target / "raw_responses.csv", all_raw, RAW_FIELDS)
+    write_csv(target / "raw_responses.csv", all_raw, RAW_FIELDS)
     print(f"  => merged total: {len(all_raw)} rows")
     print()
 
@@ -78,18 +62,18 @@ def merge_runs(target: Path, sources: list[Path]) -> None:
 
     for s in all_scorers - common_scorers:
         missing = [d.name for d, ss in zip(all_dirs, scorer_sets) if s not in ss]
-        print(f"  WARNING: scorer '{s}' missing from {', '.join(missing)} — skipped")
+        print(f"  WARNING: scorer '{s}' missing from {', '.join(missing)} -- skipped")
 
     merged_scorers: list[str] = []
     for scorer in sorted(common_scorers):
         all_scored: list[dict] = []
         for d in all_dirs:
             path = d / f"scored_{scorer}.csv"
-            rows = _load_csv(path)
+            rows = load_csv(path)
             print(f"  scored_{scorer}.csv [{d.name}]: {len(rows)} rows")
             all_scored.extend(rows)
 
-        _write_csv(target / f"scored_{scorer}.csv", all_scored, SCORED_FIELDS)
+        write_csv(target / f"scored_{scorer}.csv", all_scored, SCORED_FIELDS)
         print(f"  => merged scored_{scorer}.csv: {len(all_scored)} rows")
         merged_scorers.append(scorer)
 
@@ -103,7 +87,7 @@ def merge_runs(target: Path, sources: list[Path]) -> None:
         stale_summary = target / "summary.csv"
         if stale_summary.exists():
             stale_summary.unlink()
-        print("\nNo common scorers — summary.csv not regenerated.")
+        print("\nNo common scorers -- summary.csv not regenerated.")
         return
 
     print()

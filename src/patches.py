@@ -4,18 +4,18 @@ import re
 import pyrit.exceptions
 import pyrit.exceptions.exceptions_helpers
 
-_INVALID_JSON_ESCAPE_RE = re.compile(r'\\([^"\\/bfnrtu])')
+from src.json_sanitize import (
+    _fix_escapes_and_case,
+    _extract_rationale,
+    _SCORE_VALUE_RE,
+)
 
 _original_remove_markdown_json = pyrit.exceptions.exceptions_helpers.remove_markdown_json
 
-
-_SCORE_VALUE_TRUE_RE = re.compile(r'"score_value"\s*:\s*"True"')
-_SCORE_VALUE_FALSE_RE = re.compile(r'"score_value"\s*:\s*"False"')
-
 # NOTE: This refusal-language fallback is reached only on the Phase-1 path
 # (redteam.py objective_scorer, which talks to the victim model directly and is
-# NOT wrapped in scoring.py's _SanitizingScorerTarget). Phase-2 scorers
-# (scoring.py) route every judge response through _sanitize_json_response,
+# NOT wrapped in scoring.py's SanitizingScorerTarget). Phase-2 scorers
+# (scoring.py) route every judge response through sanitize_json_response,
 # which always yields valid JSON with a score_value, so remove_markdown_json
 # returns before this fallback ever runs. Refusal scoring is therefore not
 # affected by the "refusal-as-success" interpretation here.
@@ -30,9 +30,7 @@ _REFUSAL_RE = re.compile(
 
 
 def _patched_remove_markdown_json(response_msg: str) -> str:
-    sanitized = _INVALID_JSON_ESCAPE_RE.sub(r"\1", response_msg)
-    sanitized = _SCORE_VALUE_TRUE_RE.sub('"score_value": "true"', sanitized)
-    sanitized = _SCORE_VALUE_FALSE_RE.sub('"score_value": "false"', sanitized)
+    sanitized = _fix_escapes_and_case(response_msg)
     result = _original_remove_markdown_json(sanitized)
 
     try:
@@ -41,7 +39,7 @@ def _patched_remove_markdown_json(response_msg: str) -> str:
     except (json.JSONDecodeError, ValueError):
         pass
 
-    score_match = re.search(r'"score_value"\s*:\s*"(true|false)"', result, re.IGNORECASE)
+    score_match = _SCORE_VALUE_RE.search(result)
     if not score_match:
         is_refusal = _REFUSAL_RE.search(result)
         score_value = "true" if is_refusal else "false"
@@ -54,20 +52,10 @@ def _patched_remove_markdown_json(response_msg: str) -> str:
         })
     score_value = score_match.group(1).lower()
 
-    rationale_match = re.search(r'"rationale"\s*:\s*"', result)
-    rationale = ""
-    if rationale_match:
-        remainder = result[rationale_match.end():]
-        end_match = re.search(r'",\s*"metadata"', remainder)
-        if end_match:
-            rationale = remainder[:end_match.start()]
-        else:
-            rationale = remainder.rstrip('"}').rstrip('"')
-
     return json.dumps({
         "score_value": score_value,
         "description": "",
-        "rationale": rationale,
+        "rationale": _extract_rationale(result),
         "metadata": "",
     })
 

@@ -1,34 +1,19 @@
-import csv
 import os
 from datetime import datetime, timezone
-from pathlib import Path
 
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.scenario import ScenarioResult
 from pyrit.scenario.printer.console_printer import ConsoleScenarioResultPrinter
 from pyrit.scenario.scenarios.foundry import RedTeamAgent, FoundryStrategy
-from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestionPaths, SelfAskRefusalScorer
+from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestionPaths
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.models import SeedGroup
 from pyrit.scenario import DatasetConfiguration
 
-import src.litellm_proxy as litellm_proxy
-
-RAW_FIELDS = [
-    "objective", "last_response", "strategy", "conversation_id",
-    "executed_turns", "execution_time_ms", "pyrit_outcome", "pyrit_outcome_reason",
-]
-
-LITELLM_ENDPOINT = f"http://127.0.0.1:{litellm_proxy.LITELLM_PORT}/v1"
-
-
-def _write_csv(path: Path, rows: list[dict], fields: list[str]) -> None:
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fields)
-        writer.writeheader()
-        writer.writerows(rows)
+from src.config import LITELLM_ENDPOINT, RAW_FIELDS, RESULTS_DIR
+from src.csv_io import write_csv
 
 
 def write_run_results(scenario_result: ScenarioResult) -> str:
@@ -36,7 +21,7 @@ def write_run_results(scenario_result: ScenarioResult) -> str:
     ts = now.strftime("%Y%m%d%H%M%S") + now.strftime("%f")[:3]
     run_name = f"run_{ts}"
 
-    results_dir = Path(__file__).parent.parent / "results" / run_name
+    results_dir = RESULTS_DIR / run_name
     os.makedirs(results_dir, exist_ok=True)
 
     raw_rows: list[dict] = []
@@ -53,7 +38,7 @@ def write_run_results(scenario_result: ScenarioResult) -> str:
                 "pyrit_outcome_reason": r.outcome_reason or "",
             })
 
-    _write_csv(results_dir / "raw_responses.csv", raw_rows, RAW_FIELDS)
+    write_csv(results_dir / "raw_responses.csv", raw_rows, RAW_FIELDS)
     print(f"Results written to {results_dir}")
     return run_name
 

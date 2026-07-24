@@ -7,8 +7,7 @@ import src.patches  # noqa: F401
 import src.litellm_proxy as litellm_proxy
 import src.redteam as redteam
 import src.scoring as scoring
-
-RESULTS_DIR = Path(__file__).parent / "results"
+from src.config import DEFAULT_MODELS, RESULTS_DIR
 
 
 def _find_latest_run() -> str | None:
@@ -16,6 +15,20 @@ def _find_latest_run() -> str | None:
     if not runs:
         return None
     return str(runs[-1])
+
+
+def _print_summary_table(run_dir: str) -> None:
+    """Render summary.csv as a plain-text box table (matches make_tables style)."""
+    summary_path = Path(run_dir) / "summary.csv"
+    if not summary_path.exists():
+        print("  No summary.csv found")
+        return
+
+    with open(summary_path, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+
+    import make_tables
+    print(make_tables._fmt_box(rows))
 
 
 async def _run(dataset_size: int, skip_attack: bool, run_dir: str | None, models: list[str], victim_model_name: str) -> None:
@@ -39,23 +52,7 @@ async def _run(dataset_size: int, skip_attack: bool, run_dir: str | None, models
     print("\n" + "=" * 60)
     print("SUMMARY")
     print("=" * 60)
-    summary_path = Path(run_dir) / "summary.csv"
-    if summary_path.exists():
-        with open(summary_path, newline="", encoding="utf-8") as f:
-            rows = list(csv.DictReader(f))
-
-        headers = list(rows[0].keys())
-        col_widths = {h: max(len(h), max(len(str(r.get(h, ""))) for r in rows)) for h in headers}
-
-        header_line = " | ".join(h.rjust(col_widths[h]) for h in headers)
-        sep_line = "-+-".join("-" * col_widths[h] for h in headers)
-        print(header_line)
-        print(sep_line)
-        for r in rows:
-            line = " | ".join(str(r.get(h, "")).rjust(col_widths[h]) for h in headers)
-            print(line)
-    else:
-        print("  No summary.csv found")
+    _print_summary_table(run_dir)
 
 
 def main():
@@ -65,7 +62,7 @@ def main():
     parser.add_argument("--run-dir", type=str, default=None, help="Path to existing run dir (required with --skip-attack unless --latest)")
     parser.add_argument("--latest", action="store_true", help="Use the most recent run directory (with --skip-attack)")
     parser.add_argument("--only-attack", action="store_true", help="Run attacks + victim self-scoring only (no Claude/BF16)")
-    parser.add_argument("--models", default=None, help="Comma-separated scorers (default: asr_pyrit for --only-attack, else asr_pyrit,asr_bf16,asr_claude,strict_bf16,strict_claude,lenient_bf16,lenient_claude). Also available: strict_pyrit,lenient_pyrit")
+    parser.add_argument("--models", default=None, help="Comma-separated scorers (default: asr_pyrit for --only-attack, else all). Also available: strict_pyrit,lenient_pyrit")
     parser.add_argument("--victim-model", type=str, default="victim-llama", help="LiteLLM model name for victim target (default: victim-llama)")
     parser.add_argument("--e2e", action="store_true", help="End-to-end: auto-manage llama.cpp servers and run all phases for a tier")
     parser.add_argument("--tier", type=str, default=None, help="Quantization tier for --e2e (e.g. Q8_0, Q4_K_M, BF16)")
@@ -90,7 +87,7 @@ def main():
     elif args.only_attack:
         models = ["asr_pyrit"]
     else:
-        models = ["asr_pyrit", "asr_bf16", "asr_claude", "strict_bf16", "strict_claude", "lenient_bf16", "lenient_claude"]
+        models = list(DEFAULT_MODELS)
 
     run_dir = args.run_dir
     if args.latest:

@@ -7,27 +7,7 @@ for health before returning and ensuring GPU memory is released on shutdown.
 import subprocess
 import time
 
-try:
-    import httpx
-except ImportError:
-    import urllib.request
-    httpx = None
-
-
-def _is_healthy(port: int) -> bool:
-    """Return True if a server on *port* responds on /health or /v1/models."""
-    for endpoint in (f"http://127.0.0.1:{port}/health", f"http://127.0.0.1:{port}/v1/models"):
-        try:
-            if httpx is not None:
-                resp = httpx.get(endpoint, timeout=2)
-                if resp.status_code == 200:
-                    return True
-            else:
-                urllib.request.urlopen(endpoint, timeout=2)
-                return True
-        except Exception:
-            continue
-    return False
+from src.http_health import is_healthy
 
 
 def _build_command(gguf_path: str, port: int, config: dict) -> list[str]:
@@ -51,7 +31,7 @@ def start_server(gguf_path: str, port: int, config: dict) -> subprocess.Popen:
 
     deadline = time.monotonic() + startup_timeout
     while time.monotonic() < deadline:
-        if _is_healthy(port):
+        if is_healthy(port, ("/health", "/v1/models")):
             print(f"llama-server on :{port} is ready.")
             return proc
         if proc.poll() is not None:
@@ -68,7 +48,7 @@ def start_server(gguf_path: str, port: int, config: dict) -> subprocess.Popen:
 
 
 def stop_server(proc: subprocess.Popen | None, config: dict) -> None:
-    """Terminate *proc* (SIGTERM → SIGKILL) and wait for GPU memory release."""
+    """Terminate *proc* (SIGTERM -> SIGKILL) and wait for GPU memory release."""
     if proc is None or proc.poll() is not None:
         return
 
@@ -76,7 +56,6 @@ def stop_server(proc: subprocess.Popen | None, config: dict) -> None:
     shutdown_timeout = timeouts.get("shutdown", 30)
     gpu_release_delay = timeouts.get("gpu_release_delay", 5)
 
-    port_hint = ""
     print("Stopping llama-server ...")
     proc.terminate()
     try:

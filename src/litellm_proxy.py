@@ -3,31 +3,15 @@ import sys
 import time
 from pathlib import Path
 
-try:
-    import httpx
-except ImportError:
-    import urllib.request
-    httpx = None
+from src.http_health import is_healthy
 
 LITELLM_PORT = 4000
 LITELLM_CONFIG = str(Path(__file__).parent / "litellm_config.yaml")
 PROXY_STARTUP_TIMEOUT = 60
 
 
-def _is_proxy_healthy(port: int) -> bool:
-    try:
-        if httpx is not None:
-            resp = httpx.get(f"http://127.0.0.1:{port}/health", timeout=2)
-            return resp.status_code == 200
-        else:
-            urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2)
-            return True
-    except Exception:
-        return False
-
-
 def start_litellm_proxy(port: int = LITELLM_PORT, config_path: str = LITELLM_CONFIG, timeout: int = PROXY_STARTUP_TIMEOUT) -> subprocess.Popen | None:
-    if _is_proxy_healthy(port):
+    if is_healthy(port):
         print("LiteLLM proxy already running.")
         return None
 
@@ -42,7 +26,7 @@ def start_litellm_proxy(port: int = LITELLM_PORT, config_path: str = LITELLM_CON
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            if _is_proxy_healthy(port):
+            if is_healthy(port):
                 print("LiteLLM proxy is ready.")
                 return proc
         except Exception:

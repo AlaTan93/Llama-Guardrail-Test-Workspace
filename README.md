@@ -32,11 +32,21 @@ All model traffic (victim target, BF16 scorer, Claude scorer) routes through a s
 | File | Purpose |
 |---|---|
 | `main.py` | Entry point — starts LiteLLM proxy, orchestrates attack + scoring phases |
-| `redteam.py` | Attack generation using PyRIT RedTeamAgent + HarmBench |
-| `scoring.py` | Multi-model scoring (BF16 / Claude) |
-| `litellm_proxy.py` | Shared LiteLLM proxy startup logic |
-| `litellm_config.yaml` | LiteLLM proxy config (all models, retries, rate limits) |
-| `patches.py` | PyRIT monkey-patches (JSON normalization) |
+| `make_tables.py` | Render a run's summary CSVs as markdown comparison tables |
+| `merge_runs.py` | Merge multiple run directories into a target run |
+| `src/redteam.py` | Attack generation using PyRIT RedTeamAgent + HarmBench |
+| `src/scoring.py` | Multi-model scorer factory + scoring execution (BF16 / Claude) |
+| `src/metrics.py` | Score-counting, agreement, F1, and crosstab computation |
+| `src/summaries.py` | Summary CSV generation (ASR, refusal, crosstab) |
+| `src/config.py` | Centralised constants (scorer specs, field lists, model groups) |
+| `src/csv_io.py` | Shared CSV read/write helpers |
+| `src/http_health.py` | Shared HTTP health-check (httpx/urllib fallback) |
+| `src/json_sanitize.py` | JSON response sanitisation for scorer output |
+| `src/e2e.py` | End-to-end pipeline orchestrator (server lifecycle + both phases) |
+| `src/litellm_proxy.py` | Shared LiteLLM proxy startup logic |
+| `src/litellm_config.yaml` | LiteLLM proxy config (all models, retries, rate limits) |
+| `src/llama_server.py` | llama.cpp server lifecycle management |
+| `src/patches.py` | PyRIT monkey-patches (JSON normalization) |
 
 ## Prerequisites
 
