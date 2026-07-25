@@ -1,3 +1,7 @@
+# WIP UPDATE
+
+Methodology has been changed, data needs to be updated.
+
 # Guardrail Testing of Llama-3.1-8B-Instruct
 
 Quantization safety red-teaming pipeline. Uses [PyRIT](https://github.com/Azure/PyRIT) to automate attacks against locally-served GGUF models via llama.cpp, then independently scores each response with three different judge models to measure how quantization degrades safety guardrails. See `exploiter_plan.md` for the full research design.
