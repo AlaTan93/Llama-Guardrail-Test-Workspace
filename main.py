@@ -3,11 +3,12 @@ import asyncio
 import csv
 from pathlib import Path
 
-import src.patches  # noqa: F401
 import src.litellm_proxy as litellm_proxy
+import src.patches  # noqa: F401
 import src.redteam as redteam
 import src.scoring as scoring
-from src.config import DEFAULT_MODELS, RESULTS_DIR
+from src.config import RESULTS_DIR
+from src.scorers import DEFAULT_MODELS
 
 
 def _find_latest_run() -> str | None:
@@ -31,12 +32,30 @@ def _print_summary_table(run_dir: str) -> None:
     print(make_tables._fmt_box(rows))
 
 
-async def _run(dataset_size: int, skip_attack: bool, run_dir: str | None, models: list[str], victim_model_name: str) -> None:
-    if not skip_attack:
+def _build_victim_block(tier: str | None, victim_model_name: str, config_path: str | None) -> dict | None:
+    """Victim provenance block from --tier, or None when no tier given."""
+    if not tier:
+        return None
+    from src import tiers
+    from src.victim_meta import build_victim_block
+
+    config = tiers.load_config(config_path) if config_path else tiers.load_config()
+    gguf = tiers.resolve_gguf(tier.upper(), config)
+    return build_victim_block(tier.upper(), gguf, config.get("model_name", ""),
+                              litellm_model=victim_model_name)
+
+
+async def _run(args: argparse.Namespace, run_dir: str | None, models: list[str]) -> None:
+    """Attack phase (unless skipped) + scoring phase for the CLI workflow."""
+    if not args.skip_attack:
         print("=" * 60)
         print("PHASE 1: Running attacks")
         print("=" * 60)
-        run_name = await redteam.run_attacks(dataset_size=dataset_size, victim_model_name=victim_model_name)
+        victim = _build_victim_block(args.tier, args.victim_model, args.config)
+        run_name = await redteam.run_attacks(
+            dataset_size=args.dataset_size, victim_model_name=args.victim_model,
+            tier=args.tier.upper() if args.tier else None, victim=victim,
+        )
         run_dir = str(RESULTS_DIR / run_name)
     else:
         if not run_dir:
@@ -64,8 +83,8 @@ def main():
     parser.add_argument("--only-attack", action="store_true", help="Run attacks + victim self-scoring only (no Claude/BF16)")
     parser.add_argument("--models", default=None, help="Comma-separated scorers (default: asr_pyrit for --only-attack, else all). Also available: strict_pyrit,lenient_pyrit")
     parser.add_argument("--victim-model", type=str, default="victim-llama", help="LiteLLM model name for victim target (default: victim-llama)")
+    parser.add_argument("--tier", type=str, default=None, help="Quantization tier of the victim (e.g. Q8_0, Q4_K_M, BF16): required for --e2e; for attacks it records victim provenance (model, GGUF, SHA-256) in meta.json")
     parser.add_argument("--e2e", action="store_true", help="End-to-end: auto-manage llama.cpp servers and run all phases for a tier")
-    parser.add_argument("--tier", type=str, default=None, help="Quantization tier for --e2e (e.g. Q8_0, Q4_K_M, BF16)")
     parser.add_argument("--config", type=str, default=None, help="Path to e2e config YAML (default: src/e2e_config.yaml)")
     args = parser.parse_args()
 
@@ -74,8 +93,9 @@ def main():
             parser.error("--e2e is mutually exclusive with --skip-attack and --only-attack")
         if not args.tier:
             parser.error("--tier is required with --e2e")
-        from src.e2e import run_e2e, DEFAULT_CONFIG
-        config_path = args.config or DEFAULT_CONFIG
+        from src import tiers
+        from src.e2e import run_e2e
+        config_path = args.config or tiers.DEFAULT_CONFIG
         asyncio.run(run_e2e(args.tier, args.dataset_size, config_path))
         return
 
@@ -98,7 +118,7 @@ def main():
 
     proxy_proc = litellm_proxy.start_litellm_proxy()
     try:
-        asyncio.run(_run(args.dataset_size, args.skip_attack, run_dir, models, args.victim_model))
+        asyncio.run(_run(args, run_dir, models))
     finally:
         if proxy_proc is not None:
             proxy_proc.terminate()

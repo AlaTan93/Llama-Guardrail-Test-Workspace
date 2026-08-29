@@ -1,31 +1,21 @@
 """Multi-model scoring of attack responses.
 
-Builds scorer instances from the ``SCORER_SPECS`` table, runs them against
-previously captured responses, and writes incremental scored CSVs.  Summary
-generation is delegated to ``summaries.py``.
+Runs judges (built via :mod:`src.judges`) over previously captured responses
+and writes incremental, resumable scored CSVs.  Error classification (content
+policy, truncated-response retries) and summary generation live here and in
+``summaries.py`` respectively.
 """
 
 import asyncio
 import re
+from pathlib import Path
 
 from pyrit.models import Message, MessagePiece
-from pyrit.prompt_target import OpenAIChatTarget, PromptChatTarget
-from pyrit.score import (
-    RefusalScorerPaths,
-    SelfAskRefusalScorer,
-    SelfAskTrueFalseScorer,
-    TrueFalseQuestionPaths,
-)
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
-import src.litellm_proxy as litellm_proxy
-from src.config import (
-    DEFAULT_MODELS,
-    LITELLM_ENDPOINT,
-    SCORER_SPECS,
-)
-from src.csv_io import append_scored_row, load_raw_responses, load_scored_ids
-from src.json_sanitize import sanitize_json_response
+from src.csv_io import append_scored_row, drop_scored_rows, load_raw_responses, load_scored_ids
+from src.judges import build_scorer
+from src.scorers import DEFAULT_MODELS, is_refusal_scorer
 
 _CONTENT_POLICY_RE = re.compile(
     r"content_filter|content filter|content.policy|policy.violation"
@@ -33,26 +23,6 @@ _CONTENT_POLICY_RE = re.compile(
     r"|guardrail|filtered",
     re.IGNORECASE,
 )
-
-
-# ── Sanitising target wrapper ──────────────────────────────────────
-
-class SanitizingScorerTarget(PromptChatTarget):
-    """Wraps a chat target, sanitising judge JSON responses in-flight."""
-
-    def __init__(self, target: PromptChatTarget):
-        self._target = target
-
-    def __getattr__(self, name):
-        return getattr(self._target, name)
-
-    async def send_prompt_async(self, *, message: Message) -> list[Message]:
-        response = await self._target.send_prompt_async(message=message)
-        for msg in response:
-            for piece in msg.message_pieces:
-                if piece.converted_value_data_type == "text" and piece.converted_value:
-                    piece.converted_value = sanitize_json_response(piece.converted_value)
-        return response
 
 
 def sanitize_response(text: str, max_length: int = 2000) -> str:
@@ -75,51 +45,6 @@ def is_content_policy_error(error: BaseException) -> bool:
     return False
 
 
-# ── Scorer factory ─────────────────────────────────────────────────
-
-def scorer_spec(scorer_type: str) -> dict:
-    if scorer_type not in SCORER_SPECS:
-        raise ValueError(f"Unknown scorer type: {scorer_type}")
-    return SCORER_SPECS[scorer_type]
-
-
-def is_refusal_scorer(scorer_type: str) -> bool:
-    spec = SCORER_SPECS.get(scorer_type)
-    return spec is not None and spec["rubric"].startswith("refusal")
-
-
-def make_scorer_target(scorer_type: str) -> OpenAIChatTarget:
-    spec = scorer_spec(scorer_type)
-    return OpenAIChatTarget(
-        endpoint=LITELLM_ENDPOINT,
-        api_key="not-needed",
-        model_name=spec["model"],
-        temperature=0.1,
-    )
-
-
-def build_scorer(scorer_type: str):
-    """Build a scorer for the given scorer key, wrapped in JSON sanitisation."""
-    target = SanitizingScorerTarget(make_scorer_target(scorer_type))
-    rubric = scorer_spec(scorer_type)["rubric"]
-
-    if rubric == "refusal_strict":
-        return SelfAskRefusalScorer(
-            chat_target=target,
-            refusal_system_prompt_path=RefusalScorerPaths.OBJECTIVE_STRICT,
-        )
-    elif rubric == "refusal_lenient":
-        return SelfAskRefusalScorer(
-            chat_target=target,
-            refusal_system_prompt_path=RefusalScorerPaths.OBJECTIVE_LENIENT,
-        )
-
-    return SelfAskTrueFalseScorer(
-        chat_target=target,
-        true_false_question_path=TrueFalseQuestionPaths.TASK_ACHIEVED.value,
-    )
-
-
 # ── Scoring execution ──────────────────────────────────────────────
 
 def outcome_to_score(outcome: str) -> str:
@@ -133,8 +58,13 @@ def outcome_to_score(outcome: str) -> str:
 def score_pyrit_outcomes(
     responses: list[dict],
     run_dir: str,
+    conversation_ids: set[str] | None = None,
+    progress=None,
 ) -> None:
-    """Extract ASR scores from PyRIT's own outcome field (no LLM call)."""
+    """Extract ASR scores from PyRIT's own outcome field (no LLM call).
+
+    If *conversation_ids* is given, only those responses are (re)scored.
+    """
     scorer_type = "asr_pyrit"
     output_path = _scored_path(run_dir, scorer_type)
     already_scored = load_scored_ids(output_path)
@@ -143,19 +73,25 @@ def score_pyrit_outcomes(
         print(f"  [{scorer_type}] Resuming: {len(already_scored)} already scored, "
               f"{len(responses) - len(already_scored)} remaining")
 
-    remaining = [r for r in responses if r["conversation_id"] not in already_scored]
+    def _selected(r: dict) -> bool:
+        return conversation_ids is None or r["conversation_id"] in conversation_ids
+
+    remaining = [r for r in responses if _selected(r) and r["conversation_id"] not in already_scored]
     if not remaining:
         print(f"  [{scorer_type}] All responses already scored, skipping.")
         return
 
     write_header = not output_path.exists()
 
-    for row in remaining:
+    total = len(remaining)
+    for i, row in enumerate(remaining, start=1):
         score_value = outcome_to_score(row.get("pyrit_outcome", "undetermined"))
         scored_row = _make_scored_row(row, scorer_type, score_value,
                                       row.get("pyrit_outcome_reason", ""))
         append_scored_row(output_path, scored_row, write_header)
         write_header = False
+        if progress:
+            progress.scorer_tick(scorer_type, i, total)
 
     print(f"  [{scorer_type}] Completed: {len(remaining)} responses extracted")
 
@@ -164,8 +100,14 @@ async def score_responses(
     responses: list[dict],
     scorer_type: str,
     run_dir: str,
+    conversation_ids: set[str] | None = None,
+    progress=None,
 ) -> None:
-    """Score every unscored response with the LLM judge identified by *scorer_type*."""
+    """Score every unscored response with the LLM judge identified by *scorer_type*.
+
+    If *conversation_ids* is given, only those responses are (re)scored.
+    *progress* (optional) is a :class:`src.progress.ProgressReporter`.
+    """
     output_path = _scored_path(run_dir, scorer_type)
     already_scored = load_scored_ids(output_path)
 
@@ -173,24 +115,24 @@ async def score_responses(
         print(f"  [{scorer_type}] Resuming: {len(already_scored)} already scored, "
               f"{len(responses) - len(already_scored)} remaining")
 
-    remaining = [r for r in responses if r["conversation_id"] not in already_scored]
+    def _selected(r: dict) -> bool:
+        return conversation_ids is None or r["conversation_id"] in conversation_ids
+
+    remaining = [r for r in responses if _selected(r) and r["conversation_id"] not in already_scored]
     if not remaining:
         print(f"  [{scorer_type}] All responses already scored, skipping.")
         return
 
     write_header = not output_path.exists()
-    refusal = scorer_spec(scorer_type)["rubric"].startswith("refusal")
+    refusal = is_refusal_scorer(scorer_type)
     scorer = build_scorer(scorer_type)
 
-    total = len(responses)
-    done = len(already_scored)
-
-    for row in remaining:
-        done += 1
+    total = len(remaining)
+    for i, row in enumerate(remaining, start=1):
         objective = row["objective"]
         last_response = sanitize_response(row["last_response"])
 
-        print(f"  [{scorer_type}] {done}/{total}: {objective[:60]}...")
+        print(f"  [{scorer_type}] {i}/{total}: {objective[:60]}...")
 
         piece = MessagePiece(role="assistant", original_value=last_response)
         message = Message([piece])
@@ -203,8 +145,28 @@ async def score_responses(
                                       response_text=last_response)
         append_scored_row(output_path, scored_row, write_header)
         write_header = False
+        if progress:
+            progress.scorer_tick(scorer_type, i, total)
 
     print(f"  [{scorer_type}] Completed: {len(remaining)} responses scored")
+
+
+def invalidate_scores(run_dir: str, conversation_ids: set[str], scorers: list[str] | None = None) -> dict[str, int]:
+    """Drop rows for *conversation_ids* from scored CSVs so they get re-scored.
+
+    *scorers* defaults to every ``scored_*.csv`` present in the run dir.
+    Returns ``{scorer_type: dropped_count}``.
+    """
+    run = Path(run_dir)
+    if scorers is None:
+        scorers = sorted(p.stem.removeprefix("scored_") for p in run.glob("scored_*.csv"))
+    dropped: dict[str, int] = {}
+    for s in scorers:
+        path = run / f"scored_{s}.csv"
+        n = drop_scored_rows(path, conversation_ids)
+        if n:
+            dropped[s] = n
+    return dropped
 
 
 async def _attempt_score(
@@ -303,7 +265,18 @@ def _make_scored_row(
 
 # ── Orchestration ──────────────────────────────────────────────────
 
-async def run_scoring(run_dir: str, models: list[str] | None = None) -> None:
+async def run_scoring(
+    run_dir: str,
+    models: list[str] | None = None,
+    conversation_ids: set[str] | None = None,
+    progress=None,
+) -> None:
+    """Score a run's responses with *models*, then rewrite its summaries.
+
+    LLM judges are reached through the LiteLLM proxy — callers must ensure it
+    (and any llama.cpp servers the judges need) is up; see
+    :class:`src.servers.ServerStack`, which owns that lifecycle.
+    """
     if models is None:
         models = list(DEFAULT_MODELS)
 
@@ -313,27 +286,22 @@ async def run_scoring(run_dir: str, models: list[str] | None = None) -> None:
     print(f"Loaded {len(responses)} responses from {run_dir}")
 
     if "asr_pyrit" in models:
-        score_pyrit_outcomes(responses, run_dir)
+        score_pyrit_outcomes(responses, run_dir, conversation_ids=conversation_ids,
+                             progress=progress)
 
     llm_models = [m for m in models if m != "asr_pyrit"]
 
-    if not llm_models:
-        from src.summaries import write_summaries
-        write_summaries(run_dir, models, responses)
-        return
-
-    proxy_proc = litellm_proxy.start_litellm_proxy()
-
-    try:
-        tasks = [score_responses(responses, m, run_dir) for m in llm_models]
+    if llm_models:
+        tasks = [
+            score_responses(responses, m, run_dir,
+                            conversation_ids=conversation_ids, progress=progress)
+            for m in llm_models
+        ]
         await asyncio.gather(*tasks)
 
-        print("\nWriting summary...")
-        from src.summaries import write_summaries
-        write_summaries(run_dir, models, responses)
-    finally:
-        if proxy_proc is not None:
-            proxy_proc.terminate()
+    print("\nWriting summary...")
+    from src.summaries import write_summaries
+    write_summaries(run_dir, models, responses)
 
 
 def main():

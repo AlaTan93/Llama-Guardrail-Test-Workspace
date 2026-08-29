@@ -1,0 +1,20 @@
+# never bake secrets or state into the image
+.env
+.webapp
+
+# host artifacts / caches
+.git
+.venv
+.ruff_cache
+.pyrit
+__pycache__
+**/__pycache__
+archive
+results
+models
+llama.cpp
+tests
+
+# frontend build inputs (built inside stage 1)
+frontend/node_modules
+frontend/dist

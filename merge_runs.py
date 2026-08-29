@@ -2,7 +2,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from src.config import RAW_FIELDS, SCORED_FIELDS, RESULTS_DIR
+from src.config import RAW_FIELDS, RESULTS_DIR, SCORED_FIELDS
 from src.csv_io import load_csv, write_csv
 from src.summaries import write_summaries
 
@@ -61,7 +61,7 @@ def merge_runs(target: Path, sources: list[Path]) -> None:
         all_scorers |= s
 
     for s in all_scorers - common_scorers:
-        missing = [d.name for d, ss in zip(all_dirs, scorer_sets) if s not in ss]
+        missing = [d.name for d, ss in zip(all_dirs, scorer_sets, strict=True) if s not in ss]
         print(f"  WARNING: scorer '{s}' missing from {', '.join(missing)} -- skipped")
 
     merged_scorers: list[str] = []

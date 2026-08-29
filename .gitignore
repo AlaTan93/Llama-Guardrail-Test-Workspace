@@ -12,3 +12,11 @@ wheels/
 .env
 models/
 results/
+archive/
+
+# web dashboard state (generated token, job registry, logs)
+.webapp/
+
+# frontend (built by scripts/build_frontend.sh in a container)
+frontend/node_modules/
+frontend/dist/

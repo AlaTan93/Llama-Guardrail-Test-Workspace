@@ -1,0 +1,68 @@
+# Reproducible red-team stack.
+#
+#   web      — dashboard + pipeline job manager (built from ./Dockerfile)
+#   litellm  — LiteLLM proxy pinned to the same version as pyproject.toml
+#   (llama)  — llama.cpp containers are started/stopped dynamically by the web
+#              backend (server.mode: docker in src/e2e_config.yaml) and join
+#              the `redteam` network below.
+#
+# Start:  docker compose up -d --build
+# Token:  cat .webapp/token   (set WEB_TOKEN in .env to pin your own)
+
+name: redteam
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: redteam/web:0.1.0
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      LITELLM_HOST: litellm
+      VICTIM_HOST: redteam-victim
+      BF16_HOST: redteam-bf16
+      # Bind-mount sources for llama.cpp containers are resolved by the docker
+      # daemon on the HOST filesystem — the web backend needs the host repo
+      # path to mount ./models into those containers.
+      HOST_PROJECT_ROOT: ${PWD}
+      # PyRIT's default objective target (host runs get these from .pyrit/.env).
+      # Points at the victim through LiteLLM, mirroring host semantics.
+      OPENAI_CHAT_ENDPOINT: http://litellm:4000/v1
+      OPENAI_CHAT_KEY: not-needed
+      OPENAI_CHAT_MODEL: victim-llama
+    volumes:
+      - ./results:/app/results
+      - ./.webapp:/app/.webapp
+      - ./models:/app/models:ro
+      # job manager starts/stops llama.cpp containers through the docker socket
+      - /var/run/docker.sock:/var/run/docker.sock
+      # config overrides without rebuilding
+      - ./src/e2e_config.yaml:/app/src/e2e_config.yaml:ro
+      - ./src/litellm_config.yaml:/app/src/litellm_config.yaml:ro
+    depends_on:
+      - litellm
+    restart: unless-stopped
+    networks: [redteam]
+
+  litellm:
+    image: litellm/litellm:v1.83.7-stable@sha256:f3cf1864daeea79ebdb00dafa036e3c66d182029d66b4b13befae7c5d8802554
+    command: ["--config", "/config/config.yaml", "--port", "4000"]
+    volumes:
+      - ./src/litellm_config.yaml:/config/config.yaml:ro
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      VICTIM_API_BASE: http://redteam-victim:8080/v1
+      BF16_API_BASE: http://redteam-bf16:8081/v1
+    restart: unless-stopped
+    networks: [redteam]
+
+networks:
+  redteam:
+    name: redteam

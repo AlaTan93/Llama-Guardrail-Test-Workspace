@@ -38,24 +38,41 @@ All model traffic (victim target, BF16 scorer, Claude scorer) routes through a s
 | `main.py` | Entry point — starts LiteLLM proxy, orchestrates attack + scoring phases |
 | `make_tables.py` | Render a run's summary CSVs as markdown comparison tables |
 | `merge_runs.py` | Merge multiple run directories into a target run |
-| `src/redteam.py` | Attack generation using PyRIT RedTeamAgent + HarmBench |
-| `src/scoring.py` | Multi-model scorer factory + scoring execution (BF16 / Claude) |
-| `src/metrics.py` | Score-counting, agreement, F1, and crosstab computation |
+| `ARCHITECTURE.md` | Layer/module map, run data-flow, job lifecycle, container topology |
+| `src/config.py` | Paths, service hosts, CSV schemas |
+| `src/scorers.py` | Judge × rubric registry (all scorers + model groups) |
+| `src/tiers.py` | Tier → GGUF / docker-image resolution (single home) |
+| `src/progress.py` | `ProgressReporter` protocol for pipeline progress |
+| `src/e2e.py` | Two-phase end-to-end orchestrator (per tier) |
+| `src/redteam.py` | PyRIT attack orchestration (new runs + re-attacks) |
+| `src/runs_io.py` | Run persistence: writing/merging raw responses + meta |
+| `src/scoring.py` | Judge loops, retry/error handling, invalidation, resume |
+| `src/judges.py` | PyRIT scorer construction (via LiteLLM) + JSON sanitisation |
 | `src/summaries.py` | Summary CSV generation (ASR, refusal, crosstab) |
-| `src/config.py` | Centralised constants (scorer specs, field lists, model groups) |
-| `src/csv_io.py` | Shared CSV read/write helpers |
-| `src/http_health.py` | Shared HTTP health-check (httpx/urllib fallback) |
-| `src/json_sanitize.py` | JSON response sanitisation for scorer output |
-| `src/e2e.py` | End-to-end pipeline orchestrator (server lifecycle + both phases) |
-| `src/litellm_proxy.py` | Shared LiteLLM proxy startup logic |
-| `src/litellm_config.yaml` | LiteLLM proxy config (all models, retries, rate limits) |
-| `src/llama_server.py` | llama.cpp server lifecycle management |
+| `src/metrics.py` | Score-counting, agreement, F1, and crosstab computation |
+| `src/servers.py` | `ServerStack`: llama.cpp + LiteLLM lifecycle in one place |
+| `src/llama_server.py` | llama.cpp launch primitives (local binary or docker) |
+| `src/litellm_proxy.py` | LiteLLM proxy bring-up (spawn or external/compose) |
+| `src/run_meta.py` | Per-run `meta.json` (status, notes) |
+| `src/victim_meta.py` | Victim provenance block + cached GGUF SHA-256 |
+| `src/csv_io.py` | Shared CSV read/write/row-surgery helpers |
+| `src/http_health.py` | Shared HTTP health-check |
+| `src/json_sanitize.py` | JSON response sanitisation for judge output |
 | `src/patches.py` | PyRIT monkey-patches (JSON normalization) |
+| `src/e2e_config.yaml` | Tiers, server mode (docker/local), pinned llama.cpp images |
+| `src/litellm_config.yaml` | LiteLLM proxy config (all models, retries, rate limits) |
+| `src/web/` | Dashboard backend (FastAPI app, auth, job manager, runners, views) |
+| `Dockerfile` | Multi-stage web image (SPA build + python runtime, all pins frozen) |
+| `docker-compose.yml` | Full containerised stack (web + litellm; llama.cpp launched dynamically) |
+| `frontend/` | Web dashboard SPA (React + TS + Vite + Tailwind; built via Docker) |
+| `scripts/build_frontend.sh` | Containerised frontend build (host needs only Docker) |
+| `scripts/dev_frontend.sh` | Containerised vite dev server |
+| `tests/` | Pytest suite (CSV surgery, subset scoring, views, API) |
 
 ## Prerequisites
 
-- **(Optional) GPU**: AMD 7900 XTX (24 GB VRAM) with ROCm 6.4+
-- **Software**: Python 3.13+, [uv](https://docs.astral.sh/uv/), [llama.cpp](https://github.com/ggml-org/llama.cpp) built with ROCm/HIP/BLAS
+- **GPU (optional for orchestration)**: AMD 7900 XTX (24 GB VRAM) — ROCm userspace ships inside the pinned llama.cpp container; the host only needs the `amdgpu` kernel driver (`/dev/kfd`, `/dev/dri`)
+- **Software**: Docker + Docker Compose (containerised stack), or Python 3.13+ with [uv](https://docs.astral.sh/uv/) for host-mode runs (host-mode GPU serving additionally requires a local [llama.cpp](https://github.com/ggml-org/llama.cpp) build)
 - **API keys**: AWS credentials for Claude Haiku 4.5 via Bedrock (primary); Anthropic API key as fallback
 
 ## Setup
@@ -217,6 +234,7 @@ Each run produces a directory under `results/`:
 
 ```
 results/run_<YYYYMMDDHHMMSSmmm>/
+  meta.json                Victim provenance + run metadata (see below)
   raw_responses.csv         All attack responses + victim model's self-assessment
   scored_asr_pyrit.csv      Victim model's self-assessment extracted as scores
   scored_asr_bf16.csv       Re-scored by the BF16 reference model (ASR)
@@ -229,6 +247,34 @@ results/run_<YYYYMMDDHHMMSSmmm>/
   summary_refusal.csv       Refusal cross-scorer comparison table + capability gap
   summary_crosstab.csv      Joint ASR x guardrail 2x2 distribution per judge
 ```
+
+### `meta.json`
+
+Every run records which model it attacked. The `victim` block is written at
+attack time from `src/e2e_config.yaml` (`model_name` + tier → GGUF mapping);
+the GGUF SHA-256 is hashed once per file and cached in `.webapp/gguf_hashes.json`:
+
+```json
+{
+  "tier": "Q4_K_M",
+  "victim": {
+    "model": "meta-llama/Llama-3.1-8B-Instruct",
+    "tier": "Q4_K_M",
+    "gguf": "meta-llama-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
+    "gguf_size_mb": 4921.7,
+    "gguf_sha256": "…",
+    "litellm_model": "victim-llama"
+  },
+  "dataset_size": 400,
+  "status": "complete",
+  "notes": ""
+}
+```
+
+Re-attacks refresh the block (the tier may differ), and `--tier` on the CLI
+records the same provenance for manually launched attacks. Runs produced
+before this existed live in `archive/runs_v1/` (with the old job history in
+`archive/webapp_v1/`); `results/` is the live folder.
 
 ### `raw_responses.csv`
 
@@ -319,6 +365,92 @@ The joint ASR x guardrail distribution per judge. Each conversation is classifie
 Each metric row has columns for every judge pair (`strict_claude`, `strict_bf16`, `strict_pyrit`, `lenient_claude`, etc.). Counts (`breach`, `scarecrow`, `guarded`, `fizzle`, `unscorable`) and percentages (`breach_pct`, etc.) are provided. `unscorable` captures responses with `error` or `undetermined` in either dimension.
 
 **Interpreting the quadrants:** `breach` and `guarded` are the unambiguous outcomes (both judges agree on safety/capability). `scarecrow` and `fizzle` are the diagnostic quadrants — they reveal where safety and capability signals diverge. A tier with rising `fizzle` and stable `breach` has a capability problem, not a safety problem; rising `breach` with stable `fizzle` is pure guardrail degradation.
+
+## Web Dashboard
+
+A full-stack dashboard for tracking runs live, re-running parts of them, and comparing results.
+
+### Quick start (Docker — recommended)
+
+Everything is containerised and version-pinned; the host only needs Docker + the GGUF files:
+
+```bash
+docker compose up -d --build   # web (dashboard + job manager) + litellm proxy
+cat .webapp/token              # paste into http://localhost:8000
+```
+
+The compose stack:
+- **`web`** — multi-stage image (`Dockerfile`): pinned node builds the SPA, pinned python installs frozen deps from `uv.lock`; runs the API, job manager, and pipeline. It starts/stops llama.cpp containers on demand through the mounted docker socket (`server.mode: docker` in `src/e2e_config.yaml`).
+- **`litellm`** — LiteLLM proxy pinned to the same version as `pyproject.toml` (digest-pinned).
+- **llama.cpp (dynamic)** — `ghcr.io/ggml-org/llama.cpp` images pinned by digest (`server-rocm` for GPU, `server` for CPU); one container per role, GPU devices passed through, models mounted read-only.
+
+Reproducibility pins: image digests in `src/e2e_config.yaml` + `docker-compose.yml`, `uv.lock`, `frontend/package-lock.json` (`npm ci` enforced), and pinned base images in the `Dockerfile`. GPU access requires `/dev/kfd` + `/dev/dri` (AMD ROCm); `docker.gpu_env` pins `HIP_VISIBLE_DEVICES=0` so llama.cpp doesn't split across the dGPU and an iGPU — adjust for your host.
+
+Notes:
+- `docker compose` sets `HOST_PROJECT_ROOT` so llama containers get the right host-side `./models` path (bind-mount sources resolve on the host daemon).
+- For GPU-less orchestration testing, tier `Q2_K_CPU` runs the CPU image.
+- Mounting the docker socket gives the web container control over the host daemon — fine for a single-user research box, not for shared infrastructure.
+- The backend can also run directly on the host (`uv run python -m src.web`) with `server.mode: local` for the classic CLI workflow; host CLI runs additionally read PyRIT's `OPENAI_CHAT_*` defaults from `.pyrit/.env`.
+
+### Host-mode quick start
+
+```bash
+# 1. Build the frontend (fully containerised — the host only needs Docker)
+./scripts/build_frontend.sh
+
+# 2. Start the server (binds 0.0.0.0:8000; token prints at startup)
+uv run python -m src.web
+
+# 3. Open http://localhost:8000 and paste the token
+```
+
+The token is auto-generated into `.webapp/token` on first start; set `WEB_TOKEN` in `.env` to pin your own. The host needs **no node/npm** — all frontend tooling runs inside the pinned `node:24.16.0-alpine3.22` image.
+
+### Features
+
+- **Live run tracking** — every job (E2E tier run, attack, re-score, summarize, merge) streams log lines and per-scorer progress over SSE in real time; scoring progress is exact (`done/total` per scorer), attack progress is approximated from PyRIT's in-memory attack results.
+- **Arbitrary partial reruns**
+  - *Re-score*: select any prompts in the Prompts tab (or use the error/disagreement/content-policy filters), pick judges, submit — the backend backs up and invalidates just those rows, then re-scores only them. Everything is resume-safe.
+  - *Re-attack*: select prompts, pick a tier, and the objectives are re-run against that victim; old responses are backed up to `results/<run>/backups/` and replaced in-place, with their scores invalidated.
+- **Tabular comparisons** — side-by-side metric matrices (ASR / refusal / crosstab) across runs with tier-sorted columns, plus a per-prompt cross-run diff view that highlights judge disagreements.
+- **Per-prompt inspection** — every conversation joined across all judges: verdict chips, quadrants (breach/scarecrow/guarded/fizzle), full victim responses and judge rationales.
+- **Full orchestration** — the backend starts/stops llama.cpp servers and the LiteLLM proxy per job based on the selected scorers; one GPU job runs at a time.
+
+### Job kinds
+
+| Kind | Params | What it does |
+|---|---|---|
+| `e2e` | `tier`, `dataset_size` | Full pipeline for a tier (attacks + both scoring phases + summaries) |
+| `attack` | `tier`, `dataset_size`, optionally `run_name` + `objectives` | New attack run, or in-place re-attack of selected objectives |
+| `rescore` | `run_name`, `models[]`, optionally `conversation_ids[]`, `tier` | (Re-)score selected prompts with selected judges |
+| `summarize` | `run_name` | Regenerate summary CSVs from the scored files present |
+| `merge` | `target`, `sources[]` | Merge runs (same as `merge_runs.py`) |
+
+### API
+
+All `/api` routes require `Authorization: Bearer <token>` (the SSE route also accepts `?token=`).
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/runs`, `GET /api/runs/{name}` | Run list / detail (meta, counts, parsed summaries) |
+| `GET /api/runs/{name}/prompts?filter=&q=&scorer=&value=&quadrant=` | Joined per-prompt rows with all judges |
+| `PATCH /api/runs/{name}/meta` | Edit tier label / notes |
+| `POST /api/jobs`, `GET /api/jobs[/{id}]`, `POST /api/jobs/{id}/cancel` | Job submission & control |
+| `GET /api/jobs/{id}/events` | SSE stream (log/progress/phase/status events) |
+| `GET /api/compare?kind=&runs=a,b`, `GET /api/compare/prompts?runs=a,b` | Cross-run comparisons |
+| `GET /api/system` | Server health (:8080/:8081/:4000), tiers, queue state |
+
+### Frontend development
+
+```bash
+# terminal 1: backend
+uv run python -m src.web
+
+# terminal 2: vite dev server in a container (hot reload, proxies /api to the host)
+./scripts/dev_frontend.sh
+```
+
+The dev container proxies `/api` to `host.docker.internal:8000` (override with `API_TARGET`).
 
 ## Scoring Models
 

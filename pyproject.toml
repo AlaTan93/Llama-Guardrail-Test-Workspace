@@ -9,4 +9,25 @@ dependencies = [
     "anthropic>=0.50.0",
     "litellm[proxy]==1.83.7",
     "boto3>=1.36.0",
+    "fastapi==0.124.4",
+    "uvicorn[standard]==0.33.0",
+    "sse-starlette==3.3.4",
 ]
+
+[dependency-groups]
+dev = [
+    "httpx==0.28.1",
+    "pytest==9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 110
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501", "B008"]  # B008: FastAPI Depends/Security defaults are idiomatic

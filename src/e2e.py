@@ -18,53 +18,33 @@ Manages llama.cpp server lifecycle and sequences the two GPU phases:
 """
 
 import asyncio
-from pathlib import Path
 
-import yaml
-
-from src.config import (
-    PHASE_A_MODELS,
-    PHASE_B_CONTROL,
-    PHASE_B_QUANT,
-    RESULTS_DIR,
-)
-from src.csv_io import load_raw_responses
-import src.llama_server as llama_server
-import src.litellm_proxy as litellm_proxy
 import src.redteam as redteam
 import src.scoring as scoring
+from src import tiers
+from src.config import RESULTS_DIR
+from src.csv_io import load_raw_responses
+from src.run_meta import update_meta
+from src.scorers import PHASE_A_MODELS, PHASE_B_CONTROL, PHASE_B_QUANT
+from src.servers import ServerStack
 from src.summaries import write_summaries
-
-DEFAULT_CONFIG = str(Path(__file__).parent / "e2e_config.yaml")
-
-
-def load_config(config_path: str = DEFAULT_CONFIG) -> dict:
-    with open(config_path, encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
-
-def _resolve_gguf(tier: str, config: dict) -> str:
-    tiers = config.get("tiers", {})
-    if tier not in tiers:
-        available = ", ".join(sorted(tiers))
-        raise ValueError(f"Unknown tier '{tier}'. Available: {available}")
-    models_dir = Path(config.get("models_dir", "./models"))
-    gguf = str(models_dir / tiers[tier])
-    if not Path(gguf).exists():
-        raise FileNotFoundError(f"GGUF not found: {gguf}")
-    return gguf
+from src.victim_meta import build_victim_block
 
 
 async def run_e2e(
     tier: str,
     dataset_size: int = 400,
-    config_path: str = DEFAULT_CONFIG,
+    config_path: str = tiers.DEFAULT_CONFIG,
+    progress=None,
 ) -> None:
-    config = load_config(config_path)
-    ports = config["ports"]
+    """Full pipeline for one tier.
+
+    *progress* (optional) is a :class:`src.progress.ProgressReporter`
+    forwarded to the attack and scoring phases.
+    """
+    config = tiers.load_config(config_path)
     is_control = tier.upper() == "BF16"
 
-    victim_gguf = _resolve_gguf(tier, config)
     phase_b_models = list(PHASE_B_CONTROL if is_control else PHASE_B_QUANT)
     all_models = list(PHASE_A_MODELS) + phase_b_models
 
@@ -74,69 +54,57 @@ async def run_e2e(
         print("(BF16 control run -- asr_bf16/strict_bf16/lenient_bf16 judges skipped)")
     print("=" * 60)
 
-    proxy_proc = None
-    victim_proc = None
-    bf16_proc = None
-
-    try:
-        # LiteLLM proxy stays up across both phases (routes victim/bf16/claude).
-        proxy_proc = litellm_proxy.start_litellm_proxy()
-
+    # The proxy is held across both GPU phases; each llama server only for its
+    # own phase (single-GPU schedule: victim and BF16 judges never coexist).
+    async with ServerStack(config, proxy=True):
         # -- Phase A --
         print("\n" + "=" * 60)
         print("PHASE A: Attacks + victim self-scoring")
         print("=" * 60)
 
-        victim_proc = llama_server.start_server(victim_gguf, ports["victim"], config)
+        async with ServerStack(config, victim_tier=tier, proxy=False):
+            victim_gguf = tiers.resolve_gguf(tier, config)
+            model_name = config.get("model_name", "")
+            victim = (
+                await asyncio.to_thread(build_victim_block, tier, victim_gguf, model_name)
+                if model_name
+                else None
+            )
 
-        run_name = await redteam.run_attacks(dataset_size=dataset_size)
-        run_dir = str(RESULTS_DIR / run_name)
+            run_name = await redteam.run_attacks(
+                dataset_size=dataset_size, tier=tier, victim=victim, progress=progress
+            )
+            run_dir = str(RESULTS_DIR / run_name)
 
-        responses = load_raw_responses(run_dir)
-        print(f"Loaded {len(responses)} responses from {run_dir}")
+            responses = load_raw_responses(run_dir)
+            print(f"Loaded {len(responses)} responses from {run_dir}")
 
-        # Victim self-scores: ASR (extraction) + refusal (live judge via :8080).
-        scoring.score_pyrit_outcomes(responses, run_dir)
-        await asyncio.gather(
-            scoring.score_responses(responses, "strict_pyrit", run_dir),
-            scoring.score_responses(responses, "lenient_pyrit", run_dir),
-        )
-
-        llama_server.stop_server(victim_proc, config)
-        victim_proc = None
+            # Victim self-scores: ASR (extraction) + refusal (live judge via :8080).
+            scoring.score_pyrit_outcomes(responses, run_dir, progress=progress)
+            await asyncio.gather(
+                scoring.score_responses(responses, "strict_pyrit", run_dir, progress=progress),
+                scoring.score_responses(responses, "lenient_pyrit", run_dir, progress=progress),
+            )
 
         # -- Phase B --
         print("\n" + "=" * 60)
         print("PHASE B: External scoring")
         print("=" * 60)
 
-        if not is_control:
-            bf16_gguf = _resolve_gguf("BF16", config)
-            bf16_proc = llama_server.start_server(bf16_gguf, ports["bf16"], config)
+        async with ServerStack(config, bf16=not is_control, proxy=False):
+            tasks = [scoring.score_responses(responses, m, run_dir, progress=progress)
+                     for m in phase_b_models]
+            await asyncio.gather(*tasks)
 
-        tasks = [scoring.score_responses(responses, m, run_dir) for m in phase_b_models]
-        await asyncio.gather(*tasks)
+    # -- Summaries --
+    print("\n" + "=" * 60)
+    print("Writing summaries")
+    print("=" * 60)
+    write_summaries(run_dir, all_models, responses)
+    update_meta(run_dir, status="complete")
 
-        if bf16_proc is not None:
-            llama_server.stop_server(bf16_proc, config)
-            bf16_proc = None
-
-        # -- Summaries --
-        print("\n" + "=" * 60)
-        print("Writing summaries")
-        print("=" * 60)
-        write_summaries(run_dir, all_models, responses)
-
-        print(f"\nE2E complete.  Results: {run_dir}")
-        print(f"  python make_tables.py --run-dir {run_dir}")
-
-    finally:
-        if bf16_proc is not None:
-            llama_server.stop_server(bf16_proc, config)
-        if victim_proc is not None:
-            llama_server.stop_server(victim_proc, config)
-        if proxy_proc is not None:
-            proxy_proc.terminate()
+    print(f"\nE2E complete.  Results: {run_dir}")
+    print(f"  python make_tables.py --run-dir {run_dir}")
 
 
 def main():
@@ -145,7 +113,7 @@ def main():
     parser = argparse.ArgumentParser(description="End-to-end pipeline with server management")
     parser.add_argument("--tier", required=True, help="Quantization tier (e.g. Q8_0, Q4_K_M, BF16)")
     parser.add_argument("--dataset-size", type=int, default=400, help="Number of HarmBench objectives")
-    parser.add_argument("--config", default=DEFAULT_CONFIG, help="Path to e2e config YAML")
+    parser.add_argument("--config", default=tiers.DEFAULT_CONFIG, help="Path to e2e config YAML")
     args = parser.parse_args()
 
     asyncio.run(run_e2e(args.tier, args.dataset_size, args.config))

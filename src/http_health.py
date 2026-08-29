@@ -1,27 +1,19 @@
-"""Shared HTTP health-check with graceful httpx / urllib fallback."""
+"""Shared HTTP health-check (httpx is a hard transitive dep via pyrit)."""
 
-try:
-    import httpx
-except ImportError:
-    import urllib.request
-    httpx = None
+import httpx
 
 
-def is_healthy(port: int, endpoints: tuple[str, ...] = ("/health",)) -> bool:
-    """Return ``True`` if any endpoint on ``127.0.0.1:{port}`` responds 200.
+def is_healthy(port: int, endpoints: tuple[str, ...] = ("/health",), host: str = "127.0.0.1") -> bool:
+    """Return ``True`` if any endpoint on ``{host}:{port}`` responds 200.
 
     *endpoints* are path suffixes (e.g. ``"/health"``, ``"/v1/models"``) that
     will be tried in order until one succeeds.
     """
     for ep in endpoints:
-        url = f"http://127.0.0.1:{port}{ep}"
+        url = f"http://{host}:{port}{ep}"
         try:
-            if httpx is not None:
-                resp = httpx.get(url, timeout=2)
-                if resp.status_code == 200:
-                    return True
-            else:
-                urllib.request.urlopen(url, timeout=2)
+            resp = httpx.get(url, timeout=2)
+            if resp.status_code == 200:
                 return True
         except Exception:
             continue

@@ -19,13 +19,13 @@ model_list:
   - model_name: victim-llama
     litellm_params:
       model: openai/llama3
-      api_base: http://127.0.0.1:8080/v1
+      api_base: os.environ/VICTIM_API_BASE
       api_key: not-needed
 
   - model_name: bf16-llama
     litellm_params:
       model: openai/llama3
-      api_base: http://127.0.0.1:8081/v1
+      api_base: os.environ/BF16_API_BASE
       api_key: not-needed
       temperature: 0.1
 

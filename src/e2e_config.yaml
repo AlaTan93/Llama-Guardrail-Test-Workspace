@@ -1,18 +1,44 @@
 # End-to-end pipeline server configuration.
 #
 # Controls how the orchestrator (src/e2e.py) starts/stops llama.cpp servers
-# and maps quantization tiers to GGUF files. Adjust binary path, GPU layers,
-# and extra args to match your llama.cpp build and hardware.
+# and maps quantization tiers to GGUF files.
+#
+# server.mode:
+#   docker - start pinned llama.cpp containers (see server.docker below);
+#            the web backend / job manager manages their lifecycle via the
+#            docker socket. GPU devices are passed through when enabled.
+#   local  - spawn the host binary (classic CLI workflow; llama.cpp must be
+#            built locally, e.g. with ROCm/HIP).
 
 server:
-  binary: "./llama.cpp/build/bin/llama-server"
-  host: "127.0.0.1"
+  mode: docker
+  binary: "./llama.cpp/build/bin/llama-server"   # local mode only
+  host_bind: "127.0.0.1"                         # local mode bind address
   ngl: 99
-  extra_args: []          # additional CLI flags, e.g. ["-c", "8192", "-b", "512"]
+  extra_args: []          # additional llama-server flags, e.g. ["-c", "8192"]
+  docker:
+    # Pinned by digest for reproducibility (official ggml-org images).
+    image_gpu: "ghcr.io/ggml-org/llama.cpp:server-rocm@sha256:2d1602489bb2ba470851e5f9c11568a6706255555976797b68651ea7b2b388c3"
+    image_cpu: "ghcr.io/ggml-org/llama.cpp:server@sha256:fe658f941344ff74446441fb0c168d3841f320caa5c1d0b2641135a8db681baa"
+    network: "redteam"       # must match the compose network name
+    models_dir_mount: "/models"
+    gpu: true                # false → CPU image for every tier, no devices, ngl 0
+    publish: false           # true → publish llama ports to the host for debugging
+    # Env applied when gpu is on. llama.cpp splits across ALL ROCm devices by
+    # default (dGPU + iGPU) which crashes on the iGPU — pin device 0 (dGPU).
+    # Adjust the index per host (device order from the image's startup banner).
+    gpu_env:
+      HIP_VISIBLE_DEVICES: "0"
+      CUDA_VISIBLE_DEVICES: "0"
 
 models_dir: "./models"
 
-# tier → GGUF filename (relative to models_dir)
+# Identity of the victim model family (recorded in every run's meta.json)
+model_name: "meta-llama/Llama-3.1-8B-Instruct"
+
+# tier → GGUF filename (relative to models_dir).
+# A tier may also be a dict with per-tier overrides:
+#   Q2_K: {gguf: "...Q2_K.gguf", image: cpu}   # image: cpu|gpu override
 tiers:
   Q2_K:   "meta-llama-Llama-3.1-8B-Instruct-Q2_K.gguf"
   Q3_K_S: "meta-llama-Llama-3.1-8B-Instruct-Q3_K_S.gguf"
@@ -26,12 +52,14 @@ tiers:
   Q8_0:   "meta-llama-Llama-3.1-8B-Instruct-Q8_0.gguf"
   IQ4_XS: "meta-llama-Llama-3.1-8B-Instruct-IQ4_XS.gguf"
   BF16:   "Llama-3.1-8B-Instruct-BF16.gguf"
+  # CPU variant of Q2_K for GPU-less orchestration testing (slow inference)
+  Q2_K_CPU: {gguf: "meta-llama-Llama-3.1-8B-Instruct-Q2_K.gguf", image: cpu}
 
 ports:
   victim: 8080
   bf16:   8081
 
 timeouts:
-  startup: 120            # seconds to wait for server /health on boot
-  shutdown: 30            # grace period (SIGTERM) before SIGKILL
+  startup: 600            # seconds to wait for server /health on boot (GGUF → VRAM is slow)
+  shutdown: 30            # grace period (SIGTERM / docker stop) before SIGKILL
   gpu_release_delay: 5    # seconds to sleep after stop, before starting next server

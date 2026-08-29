@@ -5,9 +5,9 @@ import pyrit.exceptions
 import pyrit.exceptions.exceptions_helpers
 
 from src.json_sanitize import (
-    _fix_escapes_and_case,
-    _extract_rationale,
     _SCORE_VALUE_RE,
+    _extract_rationale,
+    _fix_escapes_and_case,
 )
 
 _original_remove_markdown_json = pyrit.exceptions.exceptions_helpers.remove_markdown_json

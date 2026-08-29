@@ -7,7 +7,6 @@ Produces ``summary.csv`` (ASR), ``summary_refusal.csv`` (refusal), and
 import csv
 from pathlib import Path
 
-from src.config import REFUSAL_ASR_COUNTERPART
 from src.metrics import (
     compute_agreement,
     compute_f1,
@@ -15,6 +14,7 @@ from src.metrics import (
     count_crosstab,
     count_refusal,
 )
+from src.scorers import REFUSAL_ASR_COUNTERPART
 
 
 def _write_rows(path: Path, rows: list[dict], models: list[str], label: str) -> None:
@@ -194,7 +194,7 @@ def write_summary_crosstab(run_dir: str, refusal_models: list[str]) -> None:
 
 def write_summaries(run_dir: str, models: list[str], responses: list[dict]) -> None:
     """Partition scorers by rubric and emit per-rubric summary files."""
-    from src.scoring import is_refusal_scorer
+    from src.scorers import is_refusal_scorer
 
     asr_models = [m for m in models if not is_refusal_scorer(m)]
     refusal_models = [m for m in models if is_refusal_scorer(m)]

@@ -1,0 +1,29 @@
+{
+  "name": "redteam-dashboard",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "5.59.16",
+    "@tanstack/react-table": "8.20.5",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-router": "7.0.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
+    "@types/node": "26.4.0",
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "@vitejs/plugin-react": "4.3.4",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.7.2",
+    "vite": "6.0.3"
+  }
+}
