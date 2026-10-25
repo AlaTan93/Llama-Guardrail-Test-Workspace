@@ -1,0 +1,84 @@
+# Guardrail testing stack v2 (PyRIT 1.1 + PostgreSQL + LiteLLM + SPA).
+#
+#   postgres — system of record: `guardrails` (harness) + `litellm` (proxy) DBs
+#   litellm  — model middleware, config stored in Postgres (STORE_MODEL_INDB)
+#   harness  — FastAPI + PyRIT 1.1 attack engine, serves the SPA on :8000
+#
+# llama.cpp (victim :8080, BF16 :8081) is external: point LiteLLM aliases at it
+# with scripts/bootstrap_models.py when your servers are up.
+#
+# Start:   cp .env.example .env  # fill in, then
+#          docker compose up -d --build
+# Ports:   harness 8010 (legacy web stack keeps 8000), litellm 4000.
+
+name: redteam-v2
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in stack/.env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d guardrails"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks: [v2]
+
+  litellm:
+    image: ghcr.io/berriai/litellm-database:main-stable
+    command: ["--config", "/config/config.yaml", "--port", "4000"]
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/litellm
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set in stack/.env}
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:?set in stack/.env}
+      STORE_MODEL_IN_DB: "True"
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION_NAME: ${AWS_REGION_NAME:-us-east-1}
+    volumes:
+      - ./infra/litellm/config.yaml:/config/config.yaml:ro
+    ports:
+      - "4010:4000" # legacy host-mode proxy owns 4000; v2 publishes on 4010
+    extra_hosts:
+      # llama.cpp usually runs on the host; let the proxy reach it
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [v2]
+
+  harness:
+    build:
+      context: .
+      dockerfile: harness/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@postgres:5432/guardrails
+      LITELLM_BASE_URL: http://litellm:4000/v1
+      LITELLM_ADMIN_URL: http://litellm:4000
+      LITELLM_API_KEY: ${LITELLM_MASTER_KEY}
+      TARGET_ALIAS: ${TARGET_ALIAS:-target-model}
+      JUDGE_ALIASES: ${JUDGE_ALIASES:-judge-self,judge-bf16,judge-claude}
+      PRIMARY_JUDGE: ${PRIMARY_JUDGE:-judge-claude}
+      JUDGE_TEMPERATURE: ${JUDGE_TEMPERATURE:-0.0}
+    ports:
+      - "8010:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      litellm:
+        condition: service_started
+    restart: unless-stopped
+    networks: [v2]
+
+volumes:
+  pgdata:
+
+networks:
+  v2:
+    name: redteam-v2

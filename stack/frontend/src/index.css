@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+html {
+  color-scheme: dark;
+}
+
+/* compact data tables (mirrors legacy dashboard) */
+table.data {
+  @apply w-full text-sm;
+}
+table.data th {
+  @apply px-2 py-1.5 text-left font-medium text-zinc-400 border-b border-zinc-800 whitespace-nowrap;
+}
+table.data td {
+  @apply px-2 py-1 border-b border-zinc-900 align-top;
+}
+table.data tbody tr:hover {
+  @apply bg-zinc-900/60;
+}
+
+label.field {
+  @apply flex flex-col gap-1 text-xs text-zinc-400;
+}
+
+input.field,
+select.field,
+textarea.field {
+  @apply bg-zinc-950 text-zinc-100 border border-zinc-800 rounded-md px-2.5 py-1.5 text-sm;
+  font-family: inherit;
+}
+textarea.field {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  resize: vertical;
+}
